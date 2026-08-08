@@ -95,10 +95,63 @@ Despite the relatively dense arrangement and presence of multiple guitar parts, 
 
 As in Test 1, guitar parts belonging to the same instrument category were grouped into the model's single guitar stem rather than separated into individual guitar tracks.
 
-## Test 3 — TBD
+## Test 3 — 溫柔 [還你自由版]
 
-To be completed with a deliberately challenging test track.
+### Test Material
+
+* **Artist:** 五月天 (Mayday)
+* **Track:** 溫柔 [還你自由版]
+* **Segment:** Full song
+* **Duration:** 7:06
+
+### Known Instrumentation
+
+The song contains:
+
+* Vocals
+* Bass
+* Drums
+* Piano
+* Two electric guitar parts
+
+A particularly dense section contains vocals, piano, bass, drums, and two distorted electric guitars playing simultaneously. This section provides a stress case for evaluating separation quality under heavy instrumental overlap.
+
+### Performance
+
+* **Processing time:** approximately 100.8 seconds
+* **Result:** completed successfully
+* **CUDA out-of-memory errors:** none
+
+### Separation Result
+
+The model produced subjectively good separation results across the full song.
+
+No obvious stem leakage was observed, including during the dense section containing vocals, piano, bass, drums, and two distorted electric guitars simultaneously.
+
+The separated instruments remained sufficiently clear for the intended music-practice use case.
+
+As in the previous tests, multiple guitar parts were grouped into the model's single guitar stem.
+
+### Observed Quality Limitation
+
+Across all three test tracks, separation quality decreased somewhat during heavily layered sections where many instruments played simultaneously.
+
+The degradation was noticeable in the audio quality of the separated stems, but the outputs remained subjectively good and usable for the intended practice use case.
 
 ## Conclusion
 
-To be completed after the compatibility tests.
+BS-RoFormer-SW is a viable source-separation model for the initial version of IsoJam.
+
+Across three test cases with different arrangements and durations, the model:
+
+* Successfully completed CUDA inference without out-of-memory failures
+* Produced useful separation of the major instrument categories
+* Handled full-length tracks of more than six and seven minutes
+* Produced good results even in dense, multi-instrument sections
+* Produced guitar stems suitable for the intended practice workflow
+
+The primary observed limitation is reduced stem quality during heavily layered sections. In addition, the model separates by instrument category, so multiple guitar parts are combined into a single guitar stem rather than separated individually.
+
+These limitations are acceptable for the initial version of IsoJam.
+
+BS-RoFormer-SW will therefore be used as the current source-separation model. The choice can be revisited later if practical testing reveals additional limitations or if future features require more granular source separation.
