@@ -1,11 +1,16 @@
 from fastapi import FastAPI, UploadFile, HTTPException
 from app.storage import save_upload
 from app.jobs import create_job, get_job
+from app.uploads import create_upload, get_upload
+from pydantic import BaseModel
 
 ALLOWED_AUDIO_TYPES = {
     "audio/wav",
     "audio/mpeg",
 }
+
+class CreateJobRequest(BaseModel):
+    upload_id: str
 
 
 app = FastAPI()
@@ -24,15 +29,25 @@ def upload_file(audio_file: UploadFile):
         )
 
     saved_path = save_upload(audio_file)
+
+    upload_record = create_upload(audio_file.filename, saved_path.name)
+    upload_id = upload_record["id"]
     return {
+        "id": upload_id,
         "filename": audio_file.filename,
         "content_type": audio_file.content_type,
-        "stored_filename": saved_path.name,
     }
 
 @app.post("/jobs")
-def create_job_endpoint():
-    return create_job()
+def create_job_endpoint(upload_request: CreateJobRequest):
+    upload_id = upload_request.upload_id
+    upload = get_upload(upload_id)
+    if upload is None:
+        raise HTTPException(
+            status_code=404,
+            detail="The upload does not exist"
+        )
+    return create_job(upload_id)
 
 @app.get("/jobs/{job_id}")
 def get_job_endpoint(job_id: str):
