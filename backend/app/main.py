@@ -1,5 +1,12 @@
-from fastapi import FastAPI, UploadFile
+from fastapi import FastAPI, UploadFile, HTTPException
 from app.storage import save_upload
+from app.jobs import create_job, get_job
+
+ALLOWED_AUDIO_TYPES = {
+    "audio/wav",
+    "audio/mpeg",
+}
+
 
 app = FastAPI()
 
