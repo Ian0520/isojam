@@ -1,10 +1,17 @@
 from fastapi.testclient import TestClient
 from app.main import app
 import app.storage as storage
+import app.jobs as jobs
+import app.uploads as uploads
 from uuid import uuid4
 import pytest
 
 client = TestClient(app)
+
+@pytest.fixture(autouse=True)
+def clear_registries():
+    jobs.jobs.clear()
+    uploads.uploads.clear()
 
 @pytest.fixture
 def uploaded_file_id(tmp_path, monkeypatch):
@@ -75,3 +82,24 @@ def test_get_job_not_found():
 
     data = response.json()
     assert data["detail"] == "The requested job does not exist"
+
+def test_update_job_status(uploaded_file_id):
+    job= jobs.create_job(uploaded_file_id)
+    job_id = job["id"]
+    updated_job = jobs.update_job_status(job_id, "processing")
+    
+    assert jobs.get_job(job_id)["status"] == "processing"
+    assert updated_job["status"] == "processing"
+
+def test_update_job_status_invalid(uploaded_file_id):
+    job = jobs.create_job(uploaded_file_id)
+    job_id = job["id"]
+
+    with pytest.raises(ValueError, match=f"Invalid job status: banana"):
+        jobs.update_job_status(job_id, "banana")
+
+
+def test_update_job_status_not_found():
+    fake_job_id = str(uuid4())
+    job = jobs.update_job_status(fake_job_id, "processing")
+    assert job is None
