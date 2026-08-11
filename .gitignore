@@ -12,6 +12,7 @@ __pycache__/
 .DS_Store
 
 # Local application data
+experiments/
 experiments/test-audio/
 experiments/**/.venv/
 data/
