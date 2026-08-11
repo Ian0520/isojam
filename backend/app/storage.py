@@ -3,7 +3,8 @@ from pathlib import Path
 from uuid import uuid4
 import shutil
 
-UPLOAD_DIR = Path("uploads")
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+UPLOAD_DIR = PROJECT_ROOT / "data" / "uploads"
 
 def save_upload(audio_file: UploadFile) -> Path:
         UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
