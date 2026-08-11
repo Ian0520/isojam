@@ -15,3 +15,6 @@ def save_upload(audio_file: UploadFile) -> Path:
         with destination.open("wb") as output_file:
             shutil.copyfileobj(audio_file.file, output_file)
         return destination
+
+def get_upload_path(stored_filename: str)-> Path:
+      return UPLOAD_DIR / stored_filename

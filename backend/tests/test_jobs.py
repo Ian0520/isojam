@@ -8,11 +8,6 @@ import pytest
 
 client = TestClient(app)
 
-@pytest.fixture(autouse=True)
-def clear_registries():
-    jobs.jobs.clear()
-    uploads.uploads.clear()
-
 @pytest.fixture
 def uploaded_file_id(tmp_path, monkeypatch):
     monkeypatch.setattr(storage, "UPLOAD_DIR", tmp_path)
@@ -87,7 +82,7 @@ def test_update_job_status(uploaded_file_id):
     job= jobs.create_job(uploaded_file_id)
     job_id = job["id"]
     updated_job = jobs.update_job_status(job_id, "processing")
-    
+
     assert jobs.get_job(job_id)["status"] == "processing"
     assert updated_job["status"] == "processing"
 
