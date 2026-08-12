@@ -1,11 +1,8 @@
-from fastapi.testclient import TestClient
-from app.main import app
 import app.storage as storage
 import app.uploads as uploads
 
-client = TestClient(app)
 
-def test_upload_file(tmp_path, monkeypatch):
+def test_upload_file(client, tmp_path, monkeypatch):
     # temporarily sets path to a fake one for test
     monkeypatch.setattr(storage, "UPLOAD_DIR", tmp_path)
 
@@ -38,7 +35,7 @@ def test_upload_file(tmp_path, monkeypatch):
     assert saved_file.exists()  
     assert saved_file.read_bytes() == b"fake audio data"
 
-def test_rejects_unsupported_file_type(tmp_path, monkeypatch):
+def test_rejects_unsupported_file_type(client, tmp_path, monkeypatch):
     monkeypatch.setattr(storage, "UPLOAD_DIR", tmp_path)
 
     response = client.post("/uploads",

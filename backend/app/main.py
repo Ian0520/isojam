@@ -1,8 +1,10 @@
-from fastapi import FastAPI, UploadFile, HTTPException
+from fastapi import FastAPI, UploadFile, HTTPException, BackgroundTasks, Request
 from app.storage import save_upload
 from app.jobs import create_job, get_job
 from app.uploads import create_upload, get_upload
 from pydantic import BaseModel
+from contextlib import asynccontextmanager
+from app.model import create_model_session
 
 ALLOWED_AUDIO_TYPES = {
     "audio/wav",
@@ -13,49 +15,67 @@ class CreateJobRequest(BaseModel):
     upload_id: str
 
 
-app = FastAPI()
+def create_app(model_session_factory=create_model_session):
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        session = model_session_factory()
+        app.state.model_session = session
 
-@app.get("/health")
-def health():
-    return {"status": "ok"}
+        try:
+            yield
+        finally:
+            session.close()
 
-@app.post("/uploads")
-def upload_file(audio_file: UploadFile):
-    # Check if type is allowed
-    if audio_file.content_type not in ALLOWED_AUDIO_TYPES:
-        raise HTTPException(
-            status_code=415,
-            detail="Unsupported audio type",
-        )
+    app = FastAPI(lifespan=lifespan)
 
-    saved_path = save_upload(audio_file)
+    @app.get("/health")
+    def health():
+        return {"status": "ok"}
 
-    upload_record = create_upload(audio_file.filename, saved_path.name)
-    upload_id = upload_record["id"]
-    return {
-        "id": upload_id,
-        "filename": audio_file.filename,
-        "content_type": audio_file.content_type,
-    }
+    @app.post("/uploads")
+    def upload_file(audio_file: UploadFile):
+        # Check if type is allowed
+        if audio_file.content_type not in ALLOWED_AUDIO_TYPES:
+            raise HTTPException(
+                status_code=415,
+                detail="Unsupported audio type",
+            )
 
-@app.post("/jobs")
-def create_job_endpoint(upload_request: CreateJobRequest):
-    upload_id = upload_request.upload_id
-    upload = get_upload(upload_id)
-    if upload is None:
-        raise HTTPException(
-            status_code=404,
-            detail="The upload does not exist"
-        )
-    return create_job(upload_id)
+        saved_path = save_upload(audio_file)
 
-@app.get("/jobs/{job_id}")
-def get_job_endpoint(job_id: str):
-    job = get_job(job_id)
-    if job is not None:
-        return job
-    else:
-        raise HTTPException(
-            status_code=404,
-            detail="The requested job does not exist"
-        )
+        upload_record = create_upload(audio_file.filename, saved_path.name)
+        upload_id = upload_record["id"]
+        return {
+            "id": upload_id,
+            "filename": audio_file.filename,
+            "content_type": audio_file.content_type,
+        }
+
+    @app.post("/jobs")
+    def create_job_endpoint(upload_request: CreateJobRequest):
+        upload_id = upload_request.upload_id
+        upload = get_upload(upload_id)
+        if upload is None:
+            raise HTTPException(
+                status_code=404,
+                detail="The upload does not exist"
+            )
+        return create_job(upload_id)
+
+    @app.get("/jobs/{job_id}")
+    def get_job_endpoint(job_id: str):
+        job = get_job(job_id)
+        if job is not None:
+            return job
+        else:
+            raise HTTPException(
+                status_code=404,
+                detail="The requested job does not exist"
+            )
+
+
+    return app
+
+
+app = create_app()
+

@@ -1,15 +1,10 @@
-from fastapi.testclient import TestClient
-from app.main import app
 import app.storage as storage
 import app.jobs as jobs
-import app.uploads as uploads
 from uuid import uuid4
 import pytest
 
-client = TestClient(app)
-
 @pytest.fixture
-def uploaded_file_id(tmp_path, monkeypatch):
+def uploaded_file_id(client, tmp_path, monkeypatch):
     monkeypatch.setattr(storage, "UPLOAD_DIR", tmp_path)
     upload_response = client.post("/uploads",
                                   files={
@@ -25,7 +20,7 @@ def uploaded_file_id(tmp_path, monkeypatch):
     upload_id = upload_response.json()["id"]
     return upload_id
 
-def test_create_job(uploaded_file_id):
+def test_create_job(client, uploaded_file_id):
     upload_id = uploaded_file_id
 
     create_response = client.post("/jobs",
@@ -39,7 +34,7 @@ def test_create_job(uploaded_file_id):
     assert data["status"] == "pending"
     assert data["upload_id"] == upload_id
 
-def test_create_job_not_found():
+def test_create_job_not_found(client):
     fake_upload_id = str(uuid4())
     response = client.post("/jobs",
                            json={
@@ -50,7 +45,7 @@ def test_create_job_not_found():
     assert data["detail"] == "The upload does not exist"
 
 
-def test_get_job(uploaded_file_id):
+def test_get_job(client, uploaded_file_id):
     upload_id = uploaded_file_id   
     
     create_response = client.post("/jobs",
@@ -69,7 +64,7 @@ def test_get_job(uploaded_file_id):
     assert retrieved_job["status"] == "pending"
     assert retrieved_job["upload_id"] == upload_id
 
-def test_get_job_not_found():
+def test_get_job_not_found(client):
     fake_job_id = str(uuid4())
     response = client.get(f"/jobs/{fake_job_id}")
 
