@@ -3,13 +3,29 @@ import app.jobs as jobs
 import app.uploads as uploads
 from app.main import create_app
 from fastapi.testclient import TestClient
+from types import SimpleNamespace
 
 class FakeModelSession:
     def __init__(self):
         self.closed = False
+        self.called = False
 
     def close(self):
         self.closed = True
+
+    def infer(self, input_folder, *, store_dir):
+        self.called = True
+        self.input_folder = input_folder
+        self.store_dir = store_dir
+
+        fake_guitar_output = SimpleNamespace(
+            output_id="guitar",
+            output_path=store_dir / "test_guitar.wav"
+        )
+
+        manifest = SimpleNamespace(outputs=[fake_guitar_output])
+        return manifest
+
 
 @pytest.fixture
 def fake_model_session():

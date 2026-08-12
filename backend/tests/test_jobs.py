@@ -6,6 +6,9 @@ import pytest
 @pytest.fixture
 def uploaded_file_id(client, tmp_path, monkeypatch):
     monkeypatch.setattr(storage, "UPLOAD_DIR", tmp_path)
+    output_root = tmp_path / "outputs"
+    monkeypatch.setattr(storage, "OUTPUT_DIR", output_root)
+
     upload_response = client.post("/uploads",
                                   files={
                                       "audio_file": (
@@ -34,6 +37,13 @@ def test_create_job(client, uploaded_file_id):
     assert data["status"] == "pending"
     assert data["upload_id"] == upload_id
 
+    job_id = data["id"]
+    processed_job = jobs.get_job(job_id)
+    assert processed_job["status"] == "completed"
+    assert processed_job["outputs"]["guitar"] ==  str(storage.get_job_output_dir(job_id) / "test_guitar.wav")
+
+
+
 def test_create_job_not_found(client):
     fake_upload_id = str(uuid4())
     response = client.post("/jobs",
@@ -61,9 +71,11 @@ def test_get_job(client, uploaded_file_id):
 
     retrieved_job = get_response.json()
     assert retrieved_job["id"] == job_id
-    assert retrieved_job["status"] == "pending"
+    assert retrieved_job["status"] == "completed"
     assert retrieved_job["upload_id"] == upload_id
 
+    assert retrieved_job["outputs"]["guitar"] == str(storage.get_job_output_dir(job_id) / "test_guitar.wav")
+    
 def test_get_job_not_found(client):
     fake_job_id = str(uuid4())
     response = client.get(f"/jobs/{fake_job_id}")

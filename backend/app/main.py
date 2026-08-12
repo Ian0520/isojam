@@ -2,6 +2,7 @@ from fastapi import FastAPI, UploadFile, HTTPException, BackgroundTasks, Request
 from app.storage import save_upload
 from app.jobs import create_job, get_job
 from app.uploads import create_upload, get_upload
+from app.processing import process_job
 from pydantic import BaseModel
 from contextlib import asynccontextmanager
 from app.model import create_model_session
@@ -52,7 +53,11 @@ def create_app(model_session_factory=create_model_session):
         }
 
     @app.post("/jobs")
-    def create_job_endpoint(upload_request: CreateJobRequest):
+    def create_job_endpoint(
+            upload_request: CreateJobRequest,
+            background_tasks: BackgroundTasks,
+            request: Request,
+    ):
         upload_id = upload_request.upload_id
         upload = get_upload(upload_id)
         if upload is None:
@@ -60,7 +65,15 @@ def create_app(model_session_factory=create_model_session):
                 status_code=404,
                 detail="The upload does not exist"
             )
-        return create_job(upload_id)
+        job = create_job(upload_id)
+        
+        background_tasks.add_task(
+            process_job,
+            job["id"],
+            request.app.state.model_session,
+        )
+
+        return job
 
     @app.get("/jobs/{job_id}")
     def get_job_endpoint(job_id: str):
