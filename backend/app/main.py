@@ -17,6 +17,23 @@ ALLOWED_AUDIO_TYPES = {
 class CreateJobRequest(BaseModel):
     upload_id: str
 
+def serialize_job(job):
+    job_id = job["id"]
+    status = job["status"]
+    upload_id = job["upload_id"]
+    outputs = {}
+    if "outputs" in job:
+        for stem in job["outputs"]:
+            outputs[stem] = f"/jobs/{job_id}/outputs/{stem}"
+    serialized_job = {
+        "id": job_id,
+        "status": status,
+        "upload_id": upload_id,
+        "outputs": outputs,
+    }
+    return serialized_job
+
+
 
 def create_app(model_session_factory=create_model_session):
     @asynccontextmanager
@@ -75,13 +92,13 @@ def create_app(model_session_factory=create_model_session):
             request.app.state.model_session,
         )
 
-        return job
+        return serialize_job(job)
 
     @app.get("/jobs/{job_id}")
     def get_job_endpoint(job_id: str):
         job = get_job(job_id)
         if job is not None:
-            return job
+            return serialize_job(job)
         else:
             raise HTTPException(
                 status_code=404,

@@ -36,6 +36,7 @@ def test_create_job(client, uploaded_file_id):
     assert data["id"] != ""
     assert data["status"] == "pending"
     assert data["upload_id"] == upload_id
+    assert data["outputs"] == {}
 
     job_id = data["id"]
     processed_job = jobs.get_job(job_id)
@@ -74,7 +75,7 @@ def test_get_job(client, uploaded_file_id):
     assert retrieved_job["status"] == "completed"
     assert retrieved_job["upload_id"] == upload_id
 
-    assert retrieved_job["outputs"]["guitar"] == str(storage.get_job_output_dir(job_id) / "test_guitar.wav")
+    assert retrieved_job["outputs"]["guitar"] == f"/jobs/{job_id}/outputs/guitar"
 
 def test_get_job_not_found(client):
     fake_job_id = str(uuid4())
