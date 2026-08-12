@@ -6,6 +6,8 @@ from app.processing import process_job
 from pydantic import BaseModel
 from contextlib import asynccontextmanager
 from app.model import create_model_session
+from pathlib import Path
+from fastapi.responses import FileResponse
 
 ALLOWED_AUDIO_TYPES = {
     "audio/wav",
@@ -83,10 +85,42 @@ def create_app(model_session_factory=create_model_session):
         else:
             raise HTTPException(
                 status_code=404,
-                detail="The requested job does not exist"
+                detail="The requested job does not exist",
             )
 
+    @app.get("/jobs/{job_id}/outputs/{stem}")
+    def download_job_output(job_id: str, stem: str):
+        job = get_job(job_id)
+        if job is None:
+            raise HTTPException(
+                status_code=404,
+                detail="The job does not exist",
+            )
 
+        if job["status"] != "completed":
+            raise HTTPException(
+                status_code=409,
+                detail="The job is not completed",
+            )
+
+        outputs = job.get("outputs", {})
+        
+        if stem not in outputs:
+            raise HTTPException(
+                status_code=404,
+                detail="The requested stem does not exist",
+            )
+
+        output_path = Path(outputs[stem])
+
+        if not output_path.is_file():
+            raise HTTPException(
+                        status_code=404,
+                        detail="The output file is missing",
+                    )
+            
+        return FileResponse(output_path)
+        
     return app
 
 
