@@ -5,7 +5,7 @@ import shutil
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 UPLOAD_DIR = PROJECT_ROOT / "data" / "uploads"
-OUTPUT_DIR = PROJECT_ROOT / "data" / "outtputs"
+OUTPUT_DIR = PROJECT_ROOT / "data" / "outputs"
 
 def save_upload(audio_file: UploadFile) -> Path:
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
