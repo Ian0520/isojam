@@ -2,13 +2,13 @@
 
 ## Goal
 
-Determine whether BS-RoFormer-SW is a viable source-separation model for IsoJam.
+Determine whether BS-RoFormer-SW is a viable source-separation model for IsoJam and validate a suitable integration path for the application.
 
 ## Model
 
 * **Model:** BS-RoFormer-SW
 * **Checkpoint:** `BS-Rofo-SW-Fixed.ckpt`
-* **Inference package:** `bs-roformer-infer 0.1.5`
+* **Initial inference package:** `bs-roformer-infer 0.1.5`
 * **PyTorch:** `2.13.0`
 * **Device:** CUDA
 
@@ -138,6 +138,82 @@ Across all three test tracks, separation quality decreased somewhat during heavi
 
 The degradation was noticeable in the audio quality of the separated stems, but the outputs remained subjectively good and usable for the intended practice use case.
 
+## Programmatic Integration Validation
+
+The initial compatibility tests used the command-line interface provided by `bs-roformer-infer 0.1.5`.
+
+A later integration check evaluated the newer `BSRoformerSession` Python API available on the upstream repository after the `0.1.5` release.
+
+The tested upstream revision was pinned to:
+
+```text
+de35ada5817b878da0194ee2860253dda3a9c2b2
+```
+
+The package still reports version `0.1.5`, but this revision contains unreleased API changes not present in the published `0.1.5` release.
+
+### Validation
+
+A short WAV file was processed successfully using:
+
+```python
+from bs_roformer import BSRoformerSession
+
+with BSRoformerSession(device="cuda") as session:
+    manifest = session.infer(
+        "input",
+        store_dir="output",
+    )
+```
+
+The inference completed successfully on the RTX 4060 Laptop GPU.
+
+The returned output manifest contained the generated files directly rather than requiring IsoJam to infer output filenames.
+
+The following output IDs were returned:
+
+* `bass`
+* `drums`
+* `other`
+* `vocals`
+* `guitar`
+* `piano`
+* `instrumental`
+
+Each output entry included:
+
+* the original input path
+* an output identifier
+* the generated output path
+
+This provides a suitable application-facing contract for IsoJam.
+
+### Integration Decision
+
+IsoJam will use the programmatic `BSRoformerSession` API rather than invoking the BS-RoFormer CLI through a subprocess.
+
+The selected upstream Git revision will be pinned explicitly so that unreleased upstream changes cannot silently alter IsoJam's dependency behavior.
+
+The intended architecture is:
+
+```text
+IsoJam processing layer
+        ↓
+source-separation adapter
+        ↓
+BSRoformerSession
+        ↓
+BS-RoFormer-SW
+        ↓
+generated stem manifest
+```
+
+The separation adapter will isolate BS-RoFormer-specific behavior from the rest of the application.
+
+Because `BSRoformerSession.infer()` currently accepts an input directory rather than a single audio file, IsoJam will provide a job-specific input context rather than passing the shared upload directory directly. This avoids accidentally processing unrelated uploaded files.
+
+Generated outputs will likewise be stored in job-specific output directories so that concurrent or repeated processing jobs do not overwrite one another.
+
 ## Conclusion
 
 BS-RoFormer-SW is a viable source-separation model for the initial version of IsoJam.
@@ -154,4 +230,6 @@ The primary observed limitation is reduced stem quality during heavily layered s
 
 These limitations are acceptable for the initial version of IsoJam.
 
-BS-RoFormer-SW will therefore be used as the current source-separation model. The choice can be revisited later if practical testing reveals additional limitations or if future features require more granular source separation.
+The programmatic `BSRoformerSession` API was also successfully validated as the intended application integration boundary. IsoJam will therefore use BS-RoFormer-SW through a pinned upstream revision exposing this API, while keeping the integration behind a dedicated source-separation adapter.
+
+The model choice and integration strategy can be revisited later if practical testing reveals additional limitations, if a stable release incorporates the required session API, or if future features require more granular source separation.

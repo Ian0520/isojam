@@ -2,6 +2,7 @@
 __pycache__/
 *.py[cod]
 .venv/
+*.egg-info/
 
 # Environment variables
 .env
@@ -12,7 +13,7 @@ __pycache__/
 .DS_Store
 
 # Local application data
-uploads/
-outputs/
+experiments/
 experiments/test-audio/
 experiments/**/.venv/
+data/
