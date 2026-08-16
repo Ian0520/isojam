@@ -35,7 +35,7 @@ def fake_model_session():
     return FakeModelSession()
 
 @pytest.fixture
-def client(fake_model_session, test_session_factory):
+def client(fake_model_session, test_session_factory, test_engine):
     def override_get_db():
         with test_session_factory() as session:
             yield session
@@ -45,6 +45,7 @@ def client(fake_model_session, test_session_factory):
     test_app = create_app(
         model_session_factory=fake_factory,
         db_session_factory=test_session_factory,
+        db_engine=test_engine
     )
 
     test_app.dependency_overrides[get_db] = override_get_db
@@ -53,10 +54,14 @@ def client(fake_model_session, test_session_factory):
         yield test_client
 
 @pytest.fixture
-def test_session_factory(tmp_path):
+def test_engine(tmp_path):
     tmp_url = f"sqlite:///{tmp_path}/test.db"
     tmp_engine = create_engine(tmp_url)
     enable_sqlite_foreign_keys(tmp_engine)
     Base.metadata.create_all(tmp_engine)
 
-    return sessionmaker(tmp_engine)
+    return tmp_engine
+
+@pytest.fixture
+def test_session_factory(test_engine):
+    return sessionmaker(test_engine)
