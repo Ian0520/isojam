@@ -1,6 +1,7 @@
 from app.storage import save_upload
 from app.jobs import create_job, get_job
 from app.uploads import create_upload, get_upload
+from app.job_outputs import get_job_outputs, get_job_output
 from app.processing import process_job
 from app.model import create_model_session
 from app.database import get_db, SessionLocal
@@ -21,19 +22,19 @@ ALLOWED_AUDIO_TYPES = {
 class CreateJobRequest(BaseModel):
     upload_id: UUID
 
-def serialize_job(job):
-    job_id = job["id"]
-    status = job["status"]
-    upload_id = job["upload_id"]
-    outputs = {}
-    if "outputs" in job:
-        for stem in job["outputs"]:
-            outputs[stem] = f"/jobs/{job_id}/outputs/{stem}"
+def serialize_job(job, outputs):
+    job_id = job.id
+    status = job.status
+    upload_id = job.upload_id
+
+    output_urls = {}
+    for output in outputs:
+        output_urls[output.stem] = f"/jobs/{job_id}/outputs/{output.stem}"
     serialized_job = {
         "id": job_id,
         "status": status,
         "upload_id": upload_id,
-        "outputs": outputs,
+        "outputs": output_urls,
     }
     return serialized_job
 
@@ -91,52 +92,54 @@ def create_app(model_session_factory=create_model_session, db_session_factory=Se
                 status_code=404,
                 detail="The upload does not exist"
             )
-        job = create_job(upload_id)
+        job = create_job(db, upload_id)
+        job_id = job.id
+        db.commit()
         
         background_tasks.add_task(
             process_job,
-            job["id"],
+            job_id,
             request.app.state.model_session,
             db_session_factory,
         )
 
-        return serialize_job(job)
+        return serialize_job(job, [])
 
     @app.get("/jobs/{job_id}")
-    def get_job_endpoint(job_id: str):
-        job = get_job(job_id)
-        if job is not None:
-            return serialize_job(job)
-        else:
+    def get_job_endpoint(job_id: UUID, db: Session = Depends(get_db)):
+        job = get_job(db, job_id)
+        if job is None:
             raise HTTPException(
                 status_code=404,
                 detail="The requested job does not exist",
             )
+        outputs = get_job_outputs(db, job_id)
+        return serialize_job(job, outputs)
 
     @app.get("/jobs/{job_id}/outputs/{stem}")
-    def download_job_output(job_id: str, stem: str):
-        job = get_job(job_id)
+    def download_job_output(job_id: UUID, stem: str, db: Session = Depends(get_db)):
+        job = get_job(db, job_id)
         if job is None:
             raise HTTPException(
                 status_code=404,
                 detail="The job does not exist",
             )
 
-        if job["status"] != "completed":
+        if job.status != "completed":
             raise HTTPException(
                 status_code=409,
                 detail="The job is not completed",
             )
 
-        outputs = job.get("outputs", {})
+        output = get_job_output(db, job_id, stem)
         
-        if stem not in outputs:
+        if output is None:
             raise HTTPException(
                 status_code=404,
                 detail="The requested stem does not exist",
             )
 
-        output_path = Path(outputs[stem])
+        output_path = Path(output.path)
 
         if not output_path.is_file():
             raise HTTPException(
