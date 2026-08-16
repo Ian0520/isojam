@@ -1,33 +1,29 @@
-from uuid import uuid4
-
-jobs = {}
+from app.db_models import Job
+from uuid import UUID
 
 ALLOWED_STATUSES = {"pending",
                     "processing", 
                     "completed", 
                     "failed"}
 
-def create_job(upload_id: str):
-    job_id = str(uuid4())
+def create_job(session, upload_id: UUID):
+    new_job = Job(upload_id=upload_id,
+                   status="pending"
+                   )
 
-    new_job = {
-        "id" : job_id,
-        "status" : "pending",
-        "upload_id": upload_id
-    }
-
-    jobs[job_id] = new_job
-
+    session.add(new_job)
+    session.flush()
     return new_job
 
-def get_job(job_id):
-    return jobs.get(job_id)
+def get_job(session, job_id):
+    return session.get(Job, job_id)
 
-def update_job_status(job_id: str, status: str):
-    job = get_job(job_id)
+def update_job_status(session, job_id: UUID, status: str):
+    job = get_job(session, job_id)
     if job is None:
         return None
     if status not in ALLOWED_STATUSES:
         raise ValueError(f"Invalid job status: {status}")
-    job["status"] = status
+    job.status = status
+    session.flush()
     return job

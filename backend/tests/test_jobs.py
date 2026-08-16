@@ -1,6 +1,8 @@
 import app.storage as storage
 import app.jobs as jobs
-from uuid import uuid4
+import app.uploads as uploads
+import app.job_outputs as job_outputs
+from uuid import uuid4, UUID
 import pytest
 
 @pytest.fixture
@@ -23,13 +25,13 @@ def uploaded_file_id(client, tmp_path, monkeypatch):
     upload_id = upload_response.json()["id"]
     return upload_id
 
-def test_create_job(client, uploaded_file_id):
+def test_create_job(client, uploaded_file_id, test_session_factory):
     upload_id = uploaded_file_id
 
     create_response = client.post("/jobs",
-                                      json={
-                                          "upload_id": upload_id
-                                          })
+                                    json={
+                                        "upload_id": upload_id
+                                    })
     assert create_response.status_code == 200
 
     data = create_response.json()
@@ -38,10 +40,15 @@ def test_create_job(client, uploaded_file_id):
     assert data["upload_id"] == upload_id
     assert data["outputs"] == {}
 
-    job_id = data["id"]
-    processed_job = jobs.get_job(job_id)
-    assert processed_job["status"] == "completed"
-    assert processed_job["outputs"]["guitar"] ==  str(storage.get_job_output_dir(job_id) / "test_guitar.wav")
+    job_id = UUID(data["id"])
+    with test_session_factory() as db:
+        processed_job = jobs.get_job(db, job_id)
+        assert processed_job.status == "completed"
+        outputs = job_outputs.get_job_outputs(db, job_id)
+        assert len(outputs) == 1
+        output = outputs[0]
+        assert output.stem == "guitar"
+        assert output.path == str(storage.get_job_output_dir(job_id) / "test_guitar.wav")
 
 
 
@@ -86,27 +93,6 @@ def test_get_job_not_found(client):
     data = response.json()
     assert data["detail"] == "The requested job does not exist"
 
-def test_update_job_status(uploaded_file_id):
-    job= jobs.create_job(uploaded_file_id)
-    job_id = job["id"]
-    updated_job = jobs.update_job_status(job_id, "processing")
-
-    assert jobs.get_job(job_id)["status"] == "processing"
-    assert updated_job["status"] == "processing"
-
-def test_update_job_status_invalid(uploaded_file_id):
-    job = jobs.create_job(uploaded_file_id)
-    job_id = job["id"]
-
-    with pytest.raises(ValueError, match=f"Invalid job status: banana"):
-        jobs.update_job_status(job_id, "banana")
-
-
-def test_update_job_status_not_found():
-    fake_job_id = str(uuid4())
-    job = jobs.update_job_status(fake_job_id, "processing")
-    assert job is None
-
 def test_download_job_output(client, uploaded_file_id):
     upload_id = uploaded_file_id
     create_response = client.post("/jobs",
@@ -125,14 +111,21 @@ def test_download_job_output(client, uploaded_file_id):
 
     
 def test_download_output_for_missing_job(client):
-    response = client.get("/jobs/job-123/outputs/guitar")
+    fake_job_id = uuid4()
+    response = client.get(f"/jobs/{fake_job_id}/outputs/guitar")
 
     assert response.status_code == 404
     assert response.json()["detail"] == "The job does not exist"
 
-def test_download_output_for_incomplete_job(client):
-    job = jobs.create_job("upload-123")
-    job_id = job["id"]
+def test_download_output_for_incomplete_job(client, test_session_factory):
+    with test_session_factory() as db:
+        upload = uploads.create_upload(db, "song.wav", "some-uuid.wav")
+        upload_id = upload.id
+
+        job = jobs.create_job(db, upload_id)
+        job_id = job.id
+
+        db.commit()
 
     response = client.get(f"/jobs/{job_id}/outputs/guitar")
 

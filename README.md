@@ -13,15 +13,17 @@ The backend currently supports an end-to-end WAV processing flow:
 - upload an audio file
 - create a processing job
 - run BS-RoFormer source separation in the background
-- retrieve job status and generated output metadata
+- persist job status and generated output metadata
+- retrieve jobs across server restarts
 - download generated stems through the API
 
 Current limitations:
 
-- job and upload metadata are stored in memory and are lost when the server restarts
 - source separation currently supports WAV input only
-- generated audio is stored on the local filesystem
+- metadata is stored in a local SQLite database
+- uploaded and generated audio is stored on the local filesystem
 - processing currently runs as an in-process FastAPI background task rather than through a dedicated worker
+- interrupted processing jobs are not automatically resumed after a server restart
 - authentication and user accounts are not yet implemented
 
 ## How It Works
@@ -96,6 +98,8 @@ The interactive API documentation is available at:
 http://127.0.0.1:8000/docs
 ```
 
+The application initializes its SQLite schema on startup. Upload, job, and output metadata are persisted in `data/isojam.db`.
+
 The source-separation model is loaded when the application starts and reused across processing jobs.
 
 ## Usage
@@ -157,6 +161,8 @@ GET /jobs/{job_id}/outputs/guitar
 ```text
 FastAPI API
     ↓
+SQLite metadata persistence
+    ↓
 in-process background task
     ↓
 processing layer
@@ -172,7 +178,7 @@ local filesystem storage
 
 The FastAPI application owns a single model session through its application lifespan. Processing jobs reuse that session instead of loading the model for every request.
 
-Uploaded files and generated outputs are stored under the project-level `data/` directory.
+SQLite stores upload, job, and generated-output metadata, while uploaded files and generated stems are stored on the local filesystem under the project-level `data/` directory.
 
 ## Testing
 
@@ -182,7 +188,7 @@ From the `backend` directory:
 python -m pytest
 ```
 
-The test suite covers the API, local storage, job lifecycle, processing orchestration, source-separation adapter, model-session integration boundaries, and output downloads.
+The test suite covers the API, database persistence and initialization, local storage, job lifecycle, processing orchestration, source-separation adapter, model-session integration boundaries, and output downloads.
 
 ## Documentation
 

@@ -22,4 +22,4 @@ def get_upload_path(stored_filename: str)-> Path:
     return UPLOAD_DIR / stored_filename
 
 def get_job_output_dir(job_id: str) -> Path:
-    return OUTPUT_DIR / job_id
+    return OUTPUT_DIR / str(job_id)
