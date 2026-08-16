@@ -1,7 +1,5 @@
 from app.db_models import Upload
 
-uploads = {}
-
 def create_upload(session, original_filename, stored_filename):
     upload = Upload(original_filename=original_filename,
                     stored_filename=stored_filename

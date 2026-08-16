@@ -1,5 +1,3 @@
-import app.jobs as jobs
-import app.uploads as uploads
 from app.main import create_app
 from app.db_models import Base
 from app.database import enable_sqlite_foreign_keys, get_db
@@ -7,7 +5,7 @@ from app.database import enable_sqlite_foreign_keys, get_db
 import pytest
 from fastapi.testclient import TestClient
 from types import SimpleNamespace
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import sessionmaker
 from sqlalchemy import create_engine
 
 class FakeModelSession:
@@ -35,11 +33,6 @@ class FakeModelSession:
 @pytest.fixture
 def fake_model_session():
     return FakeModelSession()
-
-@pytest.fixture(autouse=True)
-def clear_registries():
-    jobs.jobs.clear()
-    uploads.uploads.clear()
 
 @pytest.fixture
 def client(fake_model_session, test_session_factory):
