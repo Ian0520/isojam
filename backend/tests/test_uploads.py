@@ -1,10 +1,12 @@
 import app.storage as storage
 import app.uploads as uploads
+from uuid import UUID
 
 
-def test_upload_file(client, tmp_path, monkeypatch):
+def test_upload_file(client, tmp_path, monkeypatch, test_session_factory):
     # temporarily sets path to a fake one for test
-    monkeypatch.setattr(storage, "UPLOAD_DIR", tmp_path)
+    upload_dir = tmp_path / "uploads"
+    monkeypatch.setattr(storage, "UPLOAD_DIR", upload_dir)
 
     response = client.post("/uploads", 
                            files={
@@ -24,19 +26,20 @@ def test_upload_file(client, tmp_path, monkeypatch):
     assert data["id"] != ""
 
 
-    # test that the file exists
-    upload_id = data["id"]
-    upload_record = uploads.get_upload(upload_id)
-
-    assert upload_record is not None
-    assert upload_record["original_filename"] == "test.wav"
-    
-    saved_file = tmp_path / upload_record["stored_filename"]  
-    assert saved_file.exists()  
-    assert saved_file.read_bytes() == b"fake audio data"
+    # test persisted upload metadata and stored file
+    upload_id = UUID(data["id"])
+    with test_session_factory() as session:
+        upload_record = uploads.get_upload(session, upload_id)
+        assert upload_record is not None
+        assert upload_record.original_filename == "test.wav"
+        
+        saved_file = upload_dir / upload_record.stored_filename
+        assert saved_file.exists()  
+        assert saved_file.read_bytes() == b"fake audio data"
 
 def test_rejects_unsupported_file_type(client, tmp_path, monkeypatch):
-    monkeypatch.setattr(storage, "UPLOAD_DIR", tmp_path)
+    upload_dir = tmp_path / "uploads"
+    monkeypatch.setattr(storage, "UPLOAD_DIR", upload_dir)
 
     response = client.post("/uploads",
                            files={
@@ -50,4 +53,4 @@ def test_rejects_unsupported_file_type(client, tmp_path, monkeypatch):
 
     data = response.json()
     assert data["detail"] == "Unsupported audio type"
-    assert not list(tmp_path.iterdir())
+    assert not upload_dir.exists()

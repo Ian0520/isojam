@@ -1,13 +1,17 @@
-from fastapi import FastAPI, UploadFile, HTTPException, BackgroundTasks, Request
 from app.storage import save_upload
 from app.jobs import create_job, get_job
 from app.uploads import create_upload, get_upload
 from app.processing import process_job
-from pydantic import BaseModel
-from contextlib import asynccontextmanager
 from app.model import create_model_session
+from app.database import get_db, SessionLocal
+
+from fastapi import FastAPI, UploadFile, HTTPException, BackgroundTasks, Request, Depends
 from pathlib import Path
 from fastapi.responses import FileResponse
+from sqlalchemy.orm import Session
+from pydantic import BaseModel
+from contextlib import asynccontextmanager
+from uuid import UUID
 
 ALLOWED_AUDIO_TYPES = {
     "audio/wav",
@@ -15,7 +19,7 @@ ALLOWED_AUDIO_TYPES = {
 }
 
 class CreateJobRequest(BaseModel):
-    upload_id: str
+    upload_id: UUID
 
 def serialize_job(job):
     job_id = job["id"]
@@ -35,7 +39,7 @@ def serialize_job(job):
 
 
 
-def create_app(model_session_factory=create_model_session):
+def create_app(model_session_factory=create_model_session, db_session_factory=SessionLocal):
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         session = model_session_factory()
@@ -53,7 +57,7 @@ def create_app(model_session_factory=create_model_session):
         return {"status": "ok"}
 
     @app.post("/uploads")
-    def upload_file(audio_file: UploadFile):
+    def upload_file(audio_file: UploadFile, db: Session = Depends(get_db)):
         # Check if type is allowed
         if audio_file.content_type not in ALLOWED_AUDIO_TYPES:
             raise HTTPException(
@@ -63,8 +67,10 @@ def create_app(model_session_factory=create_model_session):
 
         saved_path = save_upload(audio_file)
 
-        upload_record = create_upload(audio_file.filename, saved_path.name)
-        upload_id = upload_record["id"]
+        upload_record = create_upload(db, audio_file.filename, saved_path.name)
+        upload_id = upload_record.id
+        db.commit()
+
         return {
             "id": upload_id,
             "filename": audio_file.filename,
@@ -76,9 +82,10 @@ def create_app(model_session_factory=create_model_session):
             upload_request: CreateJobRequest,
             background_tasks: BackgroundTasks,
             request: Request,
+            db: Session = Depends(get_db),
     ):
         upload_id = upload_request.upload_id
-        upload = get_upload(upload_id)
+        upload = get_upload(db, upload_id)
         if upload is None:
             raise HTTPException(
                 status_code=404,
@@ -90,6 +97,7 @@ def create_app(model_session_factory=create_model_session):
             process_job,
             job["id"],
             request.app.state.model_session,
+            db_session_factory,
         )
 
         return serialize_job(job)

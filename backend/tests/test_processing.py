@@ -23,7 +23,7 @@ class FailingSession:
     def infer(self, input_folder, *, store_dir):
         raise RuntimeError("inference failed")
     
-def test_process_job_completes_with_outputs(tmp_path, monkeypatch):
+def test_process_job_completes_with_outputs(tmp_path, monkeypatch, test_session_factory):
     monkeypatch.setattr(storage, "UPLOAD_DIR", tmp_path)
     input_path = tmp_path / "test.wav"
     input_path.write_bytes(b"fake audio file")
@@ -31,53 +31,66 @@ def test_process_job_completes_with_outputs(tmp_path, monkeypatch):
     output_root = tmp_path / "outputs"
     monkeypatch.setattr(storage, "OUTPUT_DIR", output_root)
 
-    upload = uploads.create_upload("original.wav", "test.wav")
-    upload_id = upload["id"]
+    with test_session_factory() as db:
+        upload = uploads.create_upload(
+            db,
+            "original.wav",
+            "test.wav",
+        )
+        upload_id = upload.id
+        db.commit()
 
     job = jobs.create_job(upload_id)
     job_id = job["id"]
 
-    session = FakeSession()
-    result = processing.process_job(job_id, session)
+    model_session = FakeSession()
+    result = processing.process_job(job_id, model_session, test_session_factory)
 
-    assert session.called
+    assert model_session.called
     assert result["status"] == "completed"
     assert jobs.get_job(job_id)["status"] == "completed"
     assert result["outputs"]["guitar"] == str(output_root / job_id / "test_guitar.wav")
     
 
-def test_process_job_raises_for_missing_job():
+def test_process_job_raises_for_missing_job(test_session_factory):
     fake_job_id = str(uuid4())
-    session = FakeSession()
+    model_session = FakeSession()
     with pytest.raises(KeyError, match="job not found"):
-        processing.process_job(fake_job_id, session)
-    assert not session.called
+        processing.process_job(fake_job_id, model_session, test_session_factory)
+    assert not model_session.called
 
-def test_process_job_fails_when_upload_is_missing():
-    fake_upload_id = str(uuid4())
+def test_process_job_fails_when_upload_is_missing(test_session_factory):
+    fake_upload_id = uuid4()
     job = jobs.create_job(fake_upload_id)
     job_id = job["id"]
-    session = FakeSession()
+    model_session = FakeSession()
     with pytest.raises(RuntimeError, match="upload not found"):
-        processing.process_job(job_id, session)
+        processing.process_job(job_id, model_session, test_session_factory)
     assert jobs.get_job(job_id)["status"] == "failed"
-    assert not session.called
+    assert not model_session.called
 
-def test_process_job_fails_when_file_is_missing(tmp_path, monkeypatch):
+def test_process_job_fails_when_file_is_missing(tmp_path, monkeypatch, test_session_factory):
     monkeypatch.setattr(storage, "UPLOAD_DIR", tmp_path)
-    upload = uploads.create_upload("original.wav", "missing.wav")
-    upload_id = upload["id"]
+
+    with test_session_factory() as db:
+        upload = uploads.create_upload(
+            db,
+            "original.wav",
+            "missing.wav",
+        )
+        upload_id = upload.id
+        db.commit()
 
     job = jobs.create_job(upload_id)
     job_id = job["id"]
 
-    session = FakeSession()
+    model_session = FakeSession()
     with pytest.raises(FileNotFoundError, match="file not found"):
-        processing.process_job(job_id, session)
+        processing.process_job(job_id, model_session, test_session_factory)
     assert jobs.get_job(job_id)["status"] == "failed"
-    assert not session.called
+    assert not model_session.called
 
-def test_process_job_fails_when_separation_crashes(tmp_path, monkeypatch):
+def test_process_job_fails_when_separation_crashes(tmp_path, monkeypatch, test_session_factory):
     monkeypatch.setattr(storage, "UPLOAD_DIR", tmp_path)
     input_path = tmp_path / "test.wav"
     input_path.write_bytes(b"fake audio file")
@@ -85,14 +98,20 @@ def test_process_job_fails_when_separation_crashes(tmp_path, monkeypatch):
     output_root = tmp_path / "outputs"
     monkeypatch.setattr(storage, "OUTPUT_DIR", output_root)
 
-    upload = uploads.create_upload("original.wav", "test.wav")
-    upload_id = upload["id"]
+    with test_session_factory() as db:
+        upload = uploads.create_upload(
+            db,
+            "original.wav",
+            "test.wav",
+        )
+        upload_id = upload.id
+        db.commit()
 
     job = jobs.create_job(upload_id)
     job_id = job["id"]
 
-    session = FailingSession()
+    model_session = FailingSession()
     with pytest.raises(RuntimeError, match="inference failed"):
-        processing.process_job(job_id, session)
+        processing.process_job(job_id, model_session, test_session_factory)
     assert jobs.get_job(job_id)["status"] == "failed"
 

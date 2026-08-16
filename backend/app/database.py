@@ -27,3 +27,7 @@ engine = create_engine(DATABASE_URL)
 enable_sqlite_foreign_keys(engine)
 
 SessionLocal = sessionmaker(engine)
+
+def get_db():
+    with SessionLocal() as session:
+        yield session
