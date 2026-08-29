@@ -35,7 +35,7 @@ def fake_model_session():
     return FakeModelSession()
 
 @pytest.fixture
-def client(fake_model_session, test_session_factory, test_engine):
+def client(fake_model_session, test_session_factory):
     def override_get_db():
         with test_session_factory() as session:
             yield session
@@ -45,7 +45,6 @@ def client(fake_model_session, test_session_factory, test_engine):
     test_app = create_app(
         model_session_factory=fake_factory,
         db_session_factory=test_session_factory,
-        db_engine=test_engine
     )
 
     test_app.dependency_overrides[get_db] = override_get_db

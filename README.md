@@ -82,6 +82,12 @@ Install the backend and its dependencies:
 python -m pip install -e .
 ```
 
+Apply the database migrations:
+
+```bash
+alembic upgrade head
+```
+
 The BS-RoFormer inference dependency is pinned to a specific upstream Git commit to use the programmatic `BSRoformerSession` API.
 
 ## Running
@@ -98,7 +104,9 @@ The interactive API documentation is available at:
 http://127.0.0.1:8000/docs
 ```
 
-The application initializes its SQLite schema on startup. Upload, job, and output metadata are persisted in `data/isojam.db`.
+Database schema changes are managed with Alembic. Run `alembic upgrade head` after installing dependencies and whenever new migrations are added.
+
+Upload, job, and output metadata are persisted in `data/isojam.db`.
 
 The source-separation model is loaded when the application starts and reused across processing jobs.
 
@@ -179,6 +187,8 @@ local filesystem storage
 The FastAPI application owns a single model session through its application lifespan. Processing jobs reuse that session instead of loading the model for every request.
 
 SQLite stores upload, job, and generated-output metadata, while uploaded files and generated stems are stored on the local filesystem under the project-level `data/` directory.
+
+Database schema evolution is managed through Alembic migrations.
 
 ## Testing
 
