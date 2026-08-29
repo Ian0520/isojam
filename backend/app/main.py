@@ -4,7 +4,7 @@ from app.uploads import create_upload, get_upload
 from app.job_outputs import get_job_outputs, get_job_output
 from app.processing import process_job
 from app.model import create_model_session
-from app.database import get_db, SessionLocal, engine, initialize_database
+from app.database import get_db, SessionLocal
 
 from fastapi import FastAPI, UploadFile, HTTPException, BackgroundTasks, Request, Depends
 from pathlib import Path
@@ -42,11 +42,9 @@ def serialize_job(job, outputs):
 
 def create_app(model_session_factory=create_model_session, 
                db_session_factory=SessionLocal,
-               db_engine=engine,):
+               ):
     @asynccontextmanager
-    async def lifespan(app: FastAPI):
-        initialize_database(db_engine)
-        
+    async def lifespan(app: FastAPI):      
         session = model_session_factory()
         app.state.model_session = session
 
