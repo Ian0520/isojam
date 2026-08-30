@@ -4,34 +4,11 @@ from sqlalchemy.exc import IntegrityError
 from uuid import UUID, uuid4
 import pytest
 
-def create_test_user(session, email="user@example.com"):
-    user = User(
-        email=email,
-        password_hash="some-hash",
-    )
-    session.add(user)
-    session.flush()
-    return user
-
-def create_test_upload(
-    session,
-    user,
-    original_filename="song.wav",
-    stored_filename="some-uuid.wav",
-):
-    upload = Upload(user_id=user.id,
-                    original_filename=original_filename,
-                    stored_filename=stored_filename,
-                    )
-    session.add(upload)
-    session.flush()
-    return upload
-
-def create_test_job(session, upload, status="pending"):
-    job = Job(upload_id=upload.id, status="pending")
-    session.add(job)
-    session.flush()
-    return job
+from tests.factories import (
+    create_test_user,
+    create_test_upload,
+    create_test_job,
+)
 
 def test_upload_table_definition():
     table = Upload.__table__
