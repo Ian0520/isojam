@@ -1,8 +1,5 @@
+from app.repositories import jobs, uploads, users, job_outputs
 from app.storage import save_upload
-from app.repositories.jobs import create_job, get_job
-from app.repositories.uploads import create_upload, get_upload
-from app.repositories.job_outputs import get_job_outputs, get_job_output
-from app.repositories.users import get_user_by_email, create_user
 from app.processing import process_job
 from app.model import create_model_session
 from app.database import get_db, SessionLocal
@@ -64,7 +61,7 @@ def create_app(model_session_factory=create_model_session,
         return {"status": "ok"}
 
     @app.post("/uploads")
-    def upload_file(audio_file: UploadFile, db: Session = Depends(get_db)):
+    def upload_file(audio_file: UploadFile, session: Session = Depends(get_db)):
         # Check if type is allowed
         if audio_file.content_type not in ALLOWED_AUDIO_TYPES:
             raise HTTPException(
@@ -74,9 +71,9 @@ def create_app(model_session_factory=create_model_session,
 
         saved_path = save_upload(audio_file)
 
-        upload_record = create_upload(db, audio_file.filename, saved_path.name)
+        upload_record = uploads.create_upload(session, audio_file.filename, saved_path.name)
         upload_id = upload_record.id
-        db.commit()
+        session.commit()
 
         return {
             "id": upload_id,
@@ -89,18 +86,18 @@ def create_app(model_session_factory=create_model_session,
             upload_request: CreateJobRequest,
             background_tasks: BackgroundTasks,
             request: Request,
-            db: Session = Depends(get_db),
+            session: Session = Depends(get_db),
     ):
         upload_id = upload_request.upload_id
-        upload = get_upload(db, upload_id)
+        upload = uploads.get_upload(session, upload_id)
         if upload is None:
             raise HTTPException(
                 status_code=404,
                 detail="The upload does not exist"
             )
-        job = create_job(db, upload_id)
+        job = jobs.create_job(session, upload_id)
         job_id = job.id
-        db.commit()
+        session.commit()
         
         background_tasks.add_task(
             process_job,
@@ -112,19 +109,19 @@ def create_app(model_session_factory=create_model_session,
         return serialize_job(job, [])
 
     @app.get("/jobs/{job_id}")
-    def get_job_endpoint(job_id: UUID, db: Session = Depends(get_db)):
-        job = get_job(db, job_id)
+    def get_job_endpoint(job_id: UUID, session: Session = Depends(get_db)):
+        job = jobs.get_job(session, job_id)
         if job is None:
             raise HTTPException(
                 status_code=404,
                 detail="The requested job does not exist",
             )
-        outputs = get_job_outputs(db, job_id)
+        outputs = job_outputs.get_job_outputs(session, job_id)
         return serialize_job(job, outputs)
 
     @app.get("/jobs/{job_id}/outputs/{stem}")
-    def download_job_output(job_id: UUID, stem: str, db: Session = Depends(get_db)):
-        job = get_job(db, job_id)
+    def download_job_output(job_id: UUID, stem: str, session: Session = Depends(get_db)):
+        job = jobs.get_job(session, job_id)
         if job is None:
             raise HTTPException(
                 status_code=404,
@@ -137,7 +134,7 @@ def create_app(model_session_factory=create_model_session,
                 detail="The job is not completed",
             )
 
-        output = get_job_output(db, job_id, stem)
+        output = job_outputs.get_job_output(session, job_id, stem)
         
         if output is None:
             raise HTTPException(
@@ -160,9 +157,9 @@ def create_app(model_session_factory=create_model_session,
         response_model=UserResponse,
         status_code=201,
     )
-    def register_endpoint(request: RegisterRequest, db: Session = Depends(get_db)):
+    def register_endpoint(request: RegisterRequest, session: Session = Depends(get_db)):
         normalized_email = str(request.email).strip().lower()
-        existing_user = get_user_by_email(db, normalized_email)
+        existing_user = users.get_user_by_email(session, normalized_email)
         if existing_user is not None:
             raise HTTPException(
                 status_code=409,
@@ -170,14 +167,14 @@ def create_app(model_session_factory=create_model_session,
             )
         password_hash = hash_password(request.password)
         try: 
-            user = create_user(
-                db,
+            user = users.create_user(
+                session,
                 normalized_email,
                 password_hash,
             )
-            db.commit()
+            session.commit()
         except IntegrityError:
-            db.ollback()
+            session.rollback()
             raise 409
         return UserResponse(
             id=user.id,
