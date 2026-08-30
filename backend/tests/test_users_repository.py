@@ -1,5 +1,5 @@
 from app.db_models import User
-import app.users as users
+import app.repositories.users as users
 
 from uuid import UUID, uuid4
 import pytest

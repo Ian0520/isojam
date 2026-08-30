@@ -1,5 +1,5 @@
 from app.db_models import Upload
-import app.uploads as uploads
+import app.repositories.uploads as uploads
 from uuid import UUID, uuid4
 
 from tests.factories import create_test_user

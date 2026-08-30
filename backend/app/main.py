@@ -1,7 +1,7 @@
 from app.storage import save_upload
-from app.jobs import create_job, get_job
-from app.uploads import create_upload, get_upload
-from app.job_outputs import get_job_outputs, get_job_output
+from app.repositories.jobs import create_job, get_job
+from app.repositories.uploads import create_upload, get_upload
+from app.repositories.job_outputs import get_job_outputs, get_job_output
 from app.processing import process_job
 from app.model import create_model_session
 from app.database import get_db, SessionLocal

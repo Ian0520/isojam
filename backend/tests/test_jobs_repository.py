@@ -1,4 +1,4 @@
-import app.jobs as jobs
+import app.repositories.jobs as jobs
 from app.db_models import Job
 from tests.factories import create_test_user, create_test_upload
 import pytest

@@ -1,4 +1,4 @@
-import app.job_outputs as job_outputs
+import app.repositories.job_outputs as job_outputs
 from app.db_models import JobOutput
 from tests.factories import (create_test_user, 
                             create_test_upload, 

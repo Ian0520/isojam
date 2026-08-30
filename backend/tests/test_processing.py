@@ -1,8 +1,8 @@
 import app.storage as storage
-import app.uploads as uploads
+import app.repositories.uploads as uploads
 import app.processing as processing
-import app.jobs as jobs
-import app.job_outputs as job_outputs
+import app.repositories.jobs as jobs
+import app.repositories.job_outputs as job_outputs
 from tests.factories import (create_test_user, 
                             create_test_upload, 
                             create_test_job)

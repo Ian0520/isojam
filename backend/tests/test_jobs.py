@@ -1,7 +1,7 @@
 import app.storage as storage
-import app.jobs as jobs
-import app.uploads as uploads
-import app.job_outputs as job_outputs
+import app.repositories.jobs as jobs
+import app.repositories.uploads as uploads
+import app.repositories.job_outputs as job_outputs
 from uuid import uuid4, UUID
 import pytest
 

@@ -1,5 +1,5 @@
 import app.storage as storage
-import app.uploads as uploads
+import app.repositories.uploads as uploads
 from uuid import UUID
 
 
