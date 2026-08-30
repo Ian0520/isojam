@@ -2,14 +2,18 @@ from app.storage import save_upload
 from app.repositories.jobs import create_job, get_job
 from app.repositories.uploads import create_upload, get_upload
 from app.repositories.job_outputs import get_job_outputs, get_job_output
+from app.repositories.users import get_user_by_email, create_user
 from app.processing import process_job
 from app.model import create_model_session
 from app.database import get_db, SessionLocal
+from app.schemas import RegisterRequest, UserResponse
+from app.security import hash_password
 
 from fastapi import FastAPI, UploadFile, HTTPException, BackgroundTasks, Request, Depends
 from pathlib import Path
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 from pydantic import BaseModel
 from contextlib import asynccontextmanager
 from uuid import UUID
@@ -150,7 +154,35 @@ def create_app(model_session_factory=create_model_session,
                     )
             
         return FileResponse(output_path)
-        
+
+    @app.post(
+        "/register",
+        response_model=UserResponse,
+        status_code=201,
+    )
+    def register_endpoint(request: RegisterRequest, db: Session = Depends(get_db)):
+        normalized_email = str(request.email).strip().lower()
+        existing_user = get_user_by_email(db, normalized_email)
+        if existing_user is not None:
+            raise HTTPException(
+                status_code=409,
+                detail="Email is already registered",
+            )
+        password_hash = hash_password(request.password)
+        try: 
+            user = create_user(
+                db,
+                normalized_email,
+                password_hash,
+            )
+            db.commit()
+        except IntegrityError:
+            db.ollback()
+            raise 409
+        return UserResponse(
+            id=user.id,
+            email=user.email,
+        )
     return app
 
 
