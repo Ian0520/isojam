@@ -9,6 +9,7 @@ class Upload(Base):
     __tablename__ = "uploads"
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"))
     original_filename: Mapped[str] 
     stored_filename: Mapped[str] 
 
@@ -25,3 +26,10 @@ class JobOutput(Base):
     job_id: Mapped[UUID] = mapped_column(ForeignKey("jobs.id"), primary_key=True)
     stem: Mapped[str] = mapped_column(primary_key=True)
     path: Mapped[str]
+
+class User(Base):
+    __tablename__ = "users"
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4) 
+    email: Mapped[str] = mapped_column(unique=True)
+    password_hash: Mapped[str] = mapped_column()
