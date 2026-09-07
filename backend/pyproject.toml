@@ -10,6 +10,7 @@ dependencies = [
     "alembic",
     "pwdlib[argon2]",
     "email-validator",
+    "pyjwt",
     "bs-roformer-infer @ git+https://github.com/openmirlab/bs-roformer-infer.git@de35ada5817b878da0194ee2860253dda3a9c2b2",
 ]
 
