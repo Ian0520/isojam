@@ -1,8 +1,9 @@
 from app.db_models import User
-from app.security import verify_password
+from app.security import verify_password, decode_access_token
 
 from uuid import UUID
 from sqlalchemy import select
+
 
 def test_register_creates_user(client, test_session_factory):
     email = "user@example.com"
@@ -72,3 +73,108 @@ def test_register_rejects_duplicate_email(client):
     )
     assert dup_response.status_code == 409
     assert dup_response.json()["detail"] == "Email is already registered"
+
+
+
+
+
+
+def test_login_returns_access_token(client, jwt_secret_key):
+    email = "user@example.com"
+    password = "correct-horse-battery-staple"
+    register_response = client.post(
+        "/register",
+        json={
+            "email": email,
+            "password": password,
+        },
+    )
+    assert register_response.status_code == 201
+    registered_user_id = UUID(register_response.json()["id"])
+
+    login_response = client.post(
+        "/login",
+        json={
+            "email": email,
+            "password": password,
+        },
+    )
+    assert login_response.status_code == 200
+
+    data = login_response.json()
+    access_token = data["access_token"]
+
+    assert isinstance(access_token, str)
+    assert access_token
+    assert data["token_type"] == "bearer"
+
+    decoded_user_id = decode_access_token(
+        access_token,
+        jwt_secret_key,
+    )
+
+    assert decoded_user_id == registered_user_id
+
+def test_login_normalizes_email(client):
+    normalized_email = "user@example.com"
+    submitted_email = "User@Example.COM"
+    password = "correct-horse-battery-staple"
+
+    register_response = client.post(
+        "/register",
+        json={
+            "email": normalized_email,
+            "password": password,
+        },
+    )
+    assert register_response.status_code == 201
+
+    login_response = client.post(
+        "/login",
+        json={
+            "email": submitted_email,
+            "password": password,
+        },
+    )
+
+    assert login_response.status_code == 200
+    data = login_response.json()
+    assert "access_token" in data
+    assert data["token_type"] == "bearer"
+
+
+def test_login_rejects_incorrect_password(client):
+    email = "user@example.com"
+    password = "correct-horse-battery-staple"
+    register_response = client.post(
+        "/register",
+        json={
+            "email": email,
+            "password": password,
+        },
+    )
+
+    assert register_response.status_code == 201
+
+    login_response = client.post(
+        "/login",
+        json={
+            "email": email,
+            "password": "incorrect-password"
+        }
+    )
+    assert login_response.status_code == 401
+    assert login_response.json()["detail"] == "Invalid email or password"
+
+def test_login_rejects_unknown_email(client):
+    email = "user@example.com"
+    password = "correct-horse-battery-staple"
+    login_response = client.post(
+        "/login",
+        json={
+            "email": email,
+            "password": password,
+        }
+    )
+    assert login_response.status_code == 401
+    assert login_response.json()["detail"] == "Invalid email or password"

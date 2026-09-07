@@ -3,8 +3,10 @@ from app.storage import save_upload
 from app.processing import process_job
 from app.model import create_model_session
 from app.database import get_db, SessionLocal
-from app.schemas import RegisterRequest, UserResponse
-from app.security import hash_password
+from app.schemas import RegisterRequest, UserResponse, LoginRequest, TokenResponse
+from app.security import hash_password, verify_password, create_access_token
+from app.repositories import users
+
 
 from fastapi import FastAPI, UploadFile, HTTPException, BackgroundTasks, Request, Depends
 from pathlib import Path
@@ -14,6 +16,7 @@ from sqlalchemy.exc import IntegrityError
 from pydantic import BaseModel
 from contextlib import asynccontextmanager
 from uuid import UUID
+from datetime import timedelta
 
 ALLOWED_AUDIO_TYPES = {
     "audio/wav",
@@ -41,9 +44,12 @@ def serialize_job(job, outputs):
 
 
 
-def create_app(model_session_factory=create_model_session, 
-               db_session_factory=SessionLocal,
-               ):
+def create_app(
+        model_session_factory=create_model_session, 
+        db_session_factory=SessionLocal,
+        jwt_secret_key=...,
+        access_token_expires_delta=timedelta(minutes=30),
+):
     @asynccontextmanager
     async def lifespan(app: FastAPI):      
         session = model_session_factory()
@@ -180,7 +186,36 @@ def create_app(model_session_factory=create_model_session,
             id=user.id,
             email=user.email,
         )
+    @app.post(
+        "/login",
+        response_model=TokenResponse,
+    )
+    def login_endpoint(request: LoginRequest, session: Session = Depends(get_db)):
+        normalized_email = str(request.email).strip().lower()
+        user = users.get_user_by_email(session, normalized_email)
+        if user is None:
+            raise HTTPException(
+                status_code=401,
+                detail="Invalid email or password",
+            )
+        if not verify_password(request.password, user.password_hash):
+            raise HTTPException(
+                status_code=401,
+                detail="Invalid email or password",
+            )
+        access_token = create_access_token(
+            user_id=user.id,
+            secret_key=jwt_secret_key,
+            expires_delta=access_token_expires_delta,
+        )
+
+        return TokenResponse(
+            access_token=access_token,
+            token_type="bearer",
+        )
+        
     return app
+
 
 
 app = create_app()

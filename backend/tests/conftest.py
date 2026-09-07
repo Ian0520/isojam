@@ -35,7 +35,11 @@ def fake_model_session():
     return FakeModelSession()
 
 @pytest.fixture
-def client(fake_model_session, test_session_factory):
+def client(
+    fake_model_session,
+    test_session_factory,
+    jwt_secret_key,
+):
     def override_get_db():
         with test_session_factory() as session:
             yield session
@@ -45,6 +49,7 @@ def client(fake_model_session, test_session_factory):
     test_app = create_app(
         model_session_factory=fake_factory,
         db_session_factory=test_session_factory,
+        jwt_secret_key=jwt_secret_key,
     )
 
     test_app.dependency_overrides[get_db] = override_get_db
@@ -64,3 +69,7 @@ def test_engine(tmp_path):
 @pytest.fixture
 def test_session_factory(test_engine):
     return sessionmaker(test_engine)
+
+@pytest.fixture
+def jwt_secret_key():
+    return "test-jwt-secret-key-that-is-at-least-32-bytes"
