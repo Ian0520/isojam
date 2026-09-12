@@ -1,9 +1,11 @@
 from app.db_models import User
 from app.security import verify_password, decode_access_token
+from app.repositories import users
+
 
 from uuid import UUID
 from sqlalchemy import select
-
+from sqlalchemy.exc import IntegrityError
 
 def test_register_creates_user(client, test_session_factory):
     email = "user@example.com"
@@ -75,9 +77,24 @@ def test_register_rejects_duplicate_email(client):
     assert dup_response.json()["detail"] == "Email is already registered"
 
 
+def test_register_handles_duplicate_email_race(client, monkeypatch):
+    def simulate_duplicate_email(session, email, password_hash):
+        raise IntegrityError(
+            statement="INSERT INTO users ...",
+            params=None,
+            orig=Exception("Duplicate email"),
+        )
+    monkeypatch.setattr(users, "create_user", simulate_duplicate_email)
 
-
-
+    email = "user@example.com"
+    password = "correct-horse-battery-staple"
+    response = client.post("/register"
+                    , json={
+                        "email": email,
+                        "password": password
+                    })
+    assert response.status_code == 409
+    assert response.json()["detail"] == "Email is already registered"
 
 def test_login_returns_access_token(client, jwt_secret_key):
     email = "user@example.com"
@@ -178,3 +195,4 @@ def test_login_rejects_unknown_email(client):
     )
     assert login_response.status_code == 401
     assert login_response.json()["detail"] == "Invalid email or password"
+

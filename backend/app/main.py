@@ -181,7 +181,10 @@ def create_app(
             session.commit()
         except IntegrityError:
             session.rollback()
-            raise 409
+            raise HTTPException(
+                status_code=409,
+                detail="Email is already registered",
+            )
         return UserResponse(
             id=user.id,
             email=user.email,
