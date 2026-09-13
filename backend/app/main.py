@@ -5,8 +5,7 @@ from app.model import create_model_session
 from app.database import get_db, SessionLocal
 from app.schemas import RegisterRequest, UserResponse, LoginRequest, TokenResponse
 from app.security import hash_password, verify_password, create_access_token
-from app.repositories import users
-
+from app.config import get_jwt_secret_key
 
 from fastapi import FastAPI, UploadFile, HTTPException, BackgroundTasks, Request, Depends
 from pathlib import Path
@@ -47,11 +46,14 @@ def serialize_job(job, outputs):
 def create_app(
         model_session_factory=create_model_session, 
         db_session_factory=SessionLocal,
-        jwt_secret_key=...,
+        jwt_secret_key: str | None = None,
         access_token_expires_delta=timedelta(minutes=30),
 ):
     @asynccontextmanager
     async def lifespan(app: FastAPI):      
+        app.state.jwt_secret_key = (
+            jwt_secret_key if jwt_secret_key is not None else get_jwt_secret_key()
+        )
         session = model_session_factory()
         app.state.model_session = session
 
@@ -208,7 +210,7 @@ def create_app(
             )
         access_token = create_access_token(
             user_id=user.id,
-            secret_key=jwt_secret_key,
+            secret_key=app.state.jwt_secret_key,
             expires_delta=access_token_expires_delta,
         )
 

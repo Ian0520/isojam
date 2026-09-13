@@ -1,11 +1,13 @@
 from app.db_models import User
 from app.security import verify_password, decode_access_token
 from app.repositories import users
-
+from app.main import create_app
+from app.database import get_db
 
 from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
+from fastapi.testclient import TestClient
 
 def test_register_creates_user(client, test_session_factory):
     email = "user@example.com"
@@ -196,3 +198,49 @@ def test_login_rejects_unknown_email(client):
     assert login_response.status_code == 401
     assert login_response.json()["detail"] == "Invalid email or password"
 
+def test_login_uses_jwt_secret_key_from_environment(
+    fake_model_session,
+    test_session_factory,
+    jwt_secret_key,
+    monkeypatch,
+):
+    monkeypatch.setenv("ISOJAM_JWT_SECRET_KEY", jwt_secret_key)
+    def override_get_db():
+        with test_session_factory() as session:
+            yield session
+
+    def fake_factory():
+        return fake_model_session
+
+    test_app = create_app(
+        model_session_factory=fake_factory,
+        db_session_factory=test_session_factory,
+    )
+
+    test_app.dependency_overrides[get_db] = override_get_db
+
+    with TestClient(test_app) as client:
+        email = "user@example.com"
+        password = "correct-horse-battery-staple"
+        register_response = client.post(
+            "/register",
+            json={
+                "email": email,
+                "password": password,
+            }
+        )
+        assert register_response.status_code == 201
+        user_id = UUID(register_response.json()["id"])
+
+        login_response = client.post(
+            "/login",
+            json={
+                "email": email,
+                "password": password,
+            }
+        )
+        assert login_response.status_code == 200
+        access_token = login_response.json()["access_token"]
+
+        decoded_user_id = decode_access_token(access_token, jwt_secret_key)
+        assert user_id == decoded_user_id
