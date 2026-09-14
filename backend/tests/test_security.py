@@ -1,6 +1,7 @@
 from app.security import hash_password, verify_password, create_access_token, decode_access_token
 from uuid import uuid4
-from datetime import timedelta
+
+from datetime import datetime, timezone, timedelta
 import pytest
 import jwt
 
@@ -66,3 +67,32 @@ def test_decode_access_token_rejects_token_with_wrong_secret():
 
     with pytest.raises(jwt.InvalidTokenError):
         decode_access_token(token, secret_key_b)
+
+@pytest.mark.parametrize("missing_claim", ["sub", "exp"])
+def test_decode_access_token_rejects_missing_required_claim(
+    jwt_secret_key,
+    missing_claim,
+):
+    payload = {
+        "sub": str(uuid4()),
+        "exp": datetime.now(timezone.utc) + timedelta(seconds=30),
+    }
+    del payload[missing_claim]
+    token = jwt.encode(payload, jwt_secret_key, algorithm="HS256")
+    with pytest.raises(jwt.MissingRequiredClaimError):
+        decode_access_token(
+            token=token,
+            secret_key=jwt_secret_key,
+        )
+
+def test_decode_access_token_rejects_invalid_subject(jwt_secret_key):
+    payload = {
+        "sub": "not-a-uuid",
+        "exp": datetime.now(timezone.utc) + timedelta(seconds=30),
+    }
+    token = jwt.encode(payload, jwt_secret_key, algorithm="HS256")
+    with pytest.raises(jwt.InvalidTokenError):
+        decode_access_token(
+            token=token,
+            secret_key=jwt_secret_key,
+        )

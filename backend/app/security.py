@@ -36,8 +36,12 @@ def decode_access_token(
         token,
         key=secret_key,
         algorithms=["HS256"],
+        options={"require": ["sub", "exp"]},
         )
-        
-    return UUID(payload["sub"])
+
+    try:
+        return UUID(payload["sub"])
+    except ValueError as exc:
+        raise jwt.InvalidTokenError("Token subject must be a UUID") from exc
 
     
