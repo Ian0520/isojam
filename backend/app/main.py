@@ -6,6 +6,8 @@ from app.database import get_db, SessionLocal
 from app.schemas import RegisterRequest, UserResponse, LoginRequest, TokenResponse
 from app.security import hash_password, verify_password, create_access_token
 from app.config import get_jwt_secret_key
+from app.auth import get_current_user
+from app.db_models import User
 
 from fastapi import FastAPI, UploadFile, HTTPException, BackgroundTasks, Request, Depends
 from pathlib import Path
@@ -69,7 +71,11 @@ def create_app(
         return {"status": "ok"}
 
     @app.post("/uploads")
-    def upload_file(audio_file: UploadFile, session: Session = Depends(get_db)):
+    def upload_file(
+        audio_file: UploadFile, 
+        session: Session = Depends(get_db),
+        current_user: User = Depends(get_current_user),
+    ):
         # Check if type is allowed
         if audio_file.content_type not in ALLOWED_AUDIO_TYPES:
             raise HTTPException(
@@ -79,7 +85,12 @@ def create_app(
 
         saved_path = save_upload(audio_file)
 
-        upload_record = uploads.create_upload(session, audio_file.filename, saved_path.name)
+        upload_record = uploads.create_upload(
+            session=session, 
+            original_filename=audio_file.filename,
+            stored_filename=saved_path.name,
+            user_id=current_user.id,
+        )
         upload_id = upload_record.id
         session.commit()
 
