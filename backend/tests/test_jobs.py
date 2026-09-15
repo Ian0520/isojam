@@ -94,7 +94,10 @@ def test_get_job(client, uploaded_file_id, auth_headers):
     assert create_response.status_code == 200
     created_job = create_response.json()
     job_id = created_job["id"]
-    get_response = client.get(f"/jobs/{job_id}")
+    get_response = client.get(
+        f"/jobs/{job_id}",
+        headers=auth_headers,
+        )
 
     assert get_response.status_code == 200
 
@@ -105,9 +108,12 @@ def test_get_job(client, uploaded_file_id, auth_headers):
 
     assert retrieved_job["outputs"]["guitar"] == f"/jobs/{job_id}/outputs/guitar"
 
-def test_get_job_not_found(client):
+def test_get_job_not_found(client, auth_headers):
     fake_job_id = str(uuid4())
-    response = client.get(f"/jobs/{fake_job_id}")
+    response = client.get(
+        f"/jobs/{fake_job_id}",
+        headers=auth_headers,
+        )
 
     assert response.status_code == 404
 
@@ -230,3 +236,41 @@ def test_create_job_rejects_another_users_upload(
     process_job_mock.assert_not_called()
     with test_session_factory() as session:
         assert session.scalars(select(Job)).first() is None
+
+def test_get_job_requires_authentication(client):
+    job_id = uuid4()
+    response = client.get(
+        f"/jobs/{job_id}",
+    )
+    assert response.status_code == 401
+    assert response.headers.get("WWW-Authenticate") == "Bearer"
+
+def test_get_job_rejects_another_users_job(
+    client,
+    test_session_factory,
+    jwt_secret_key,
+):
+    with test_session_factory() as session:
+        alice = create_test_user(session, "alice@example.com")
+        bob = create_test_user(session, "bob@example.com")
+        bob_upload = create_test_upload(session, bob)
+        bob_job = create_test_job(session, bob_upload)
+        bob_job_id = bob_job.id
+        alice_user_id = alice.id
+
+        session.commit()
+
+    access_token = create_access_token(
+        user_id=alice_user_id,
+        secret_key=jwt_secret_key,
+        expires_delta=timedelta(minutes=5),
+    )
+
+    response = client.get(
+        f"/jobs/{bob_job_id}",
+        headers={"Authorization": f"Bearer {access_token}"}
+    )
+    assert response.status_code == 404
+    assert response.json()["detail"] == "The requested job does not exist"
+
+
