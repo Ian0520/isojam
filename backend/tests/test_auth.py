@@ -374,3 +374,19 @@ def test_get_current_user_rejects_nonexistent_user(client, jwt_secret_key):
 
     assert response.status_code == 401
     assert response.headers.get("WWW-Authenticate") == "Bearer"
+
+def test_register_rejects_empty_password(client, test_session_factory):
+    email = "user@example.com"
+    response = client.post(
+        "/register",
+        json={
+            "email": email,
+            "password": "",
+        }
+    )
+    assert response.status_code == 422
+    with test_session_factory() as session:
+        statement = select(User).where(User.email == email)
+        user = session.scalars(statement).one_or_none()
+        assert user is None
+    
