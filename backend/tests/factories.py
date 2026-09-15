@@ -24,7 +24,7 @@ def create_test_upload(
     return upload
 
 def create_test_job(session, upload, status="pending"):
-    job = Job(upload_id=upload.id, status="pending")
+    job = Job(upload_id=upload.id, status=status)
     session.add(job)
     session.flush()
     return job

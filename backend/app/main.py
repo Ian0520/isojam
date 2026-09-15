@@ -150,9 +150,21 @@ def create_app(
         return serialize_job(job, outputs)
 
     @app.get("/jobs/{job_id}/outputs/{stem}")
-    def download_job_output(job_id: UUID, stem: str, session: Session = Depends(get_db)):
+    def download_job_output(
+        job_id: UUID,
+        stem: str,
+        session: Session = Depends(get_db),
+        current_user: User = Depends(get_current_user),
+    ):
         job = jobs.get_job(session, job_id)
         if job is None:
+            raise HTTPException(
+                status_code=404,
+                detail="The job does not exist",
+            )
+
+        upload = uploads.get_upload(session, job.upload_id)
+        if upload is None or upload.user_id != current_user.id:
             raise HTTPException(
                 status_code=404,
                 detail="The job does not exist",
