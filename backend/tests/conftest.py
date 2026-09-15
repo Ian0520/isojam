@@ -1,12 +1,15 @@
 from app.main import create_app
 from app.db_models import Base
 from app.database import enable_sqlite_foreign_keys, get_db
+from app.security import create_access_token
+from tests.factories import create_test_user
 
 import pytest
 from fastapi.testclient import TestClient
 from types import SimpleNamespace
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy import create_engine
+from datetime import timedelta
 
 class FakeModelSession:
     def __init__(self):
@@ -73,3 +76,16 @@ def test_session_factory(test_engine):
 @pytest.fixture
 def jwt_secret_key():
     return "test-jwt-secret-key-that-is-at-least-32-bytes"
+
+@pytest.fixture
+def auth_headers(test_session_factory, jwt_secret_key):
+    with test_session_factory() as session:
+        user = create_test_user(session)
+        user_id = user.id
+        session.commit()
+    access_token = create_access_token(
+        user_id=user_id,
+        secret_key=jwt_secret_key,
+        expires_delta=timedelta(minutes=5),
+    )
+    return {"Authorization": f"Bearer {access_token}"}

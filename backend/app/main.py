@@ -106,10 +106,11 @@ def create_app(
             background_tasks: BackgroundTasks,
             request: Request,
             session: Session = Depends(get_db),
+            current_user: User = Depends(get_current_user),
     ):
         upload_id = upload_request.upload_id
         upload = uploads.get_upload(session, upload_id)
-        if upload is None:
+        if upload is None or current_user.id != upload.user_id:
             raise HTTPException(
                 status_code=404,
                 detail="The upload does not exist"
