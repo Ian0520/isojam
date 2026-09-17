@@ -13,6 +13,7 @@ __pycache__/
 .DS_Store
 
 # Local application data
+/backend/temp_auth_migration.db
 experiments/
 experiments/test-audio/
 experiments/**/.venv/

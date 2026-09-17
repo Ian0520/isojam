@@ -1,8 +1,8 @@
-import app.jobs as jobs
-import app.uploads as uploads
+import app.repositories.jobs as jobs
+import app.repositories.uploads as uploads
 import app.storage as storage
 import app.separation as separation
-import app.job_outputs as job_outputs
+import app.repositories.job_outputs as job_outputs
 from uuid import UUID
 
 def process_job(job_id: UUID, model_session, db_session_factory):

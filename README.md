@@ -1,206 +1,219 @@
 # IsoJam
 
-IsoJam is a music-practice web application that uses audio source separation to generate isolated instrument tracks and backing tracks from uploaded songs.
+IsoJam turns songs into practice tracks. Musicians can upload a song, separate it into instrument stems, and download isolated tracks or backing tracks for practice.
 
-## Status
+This is a backend-focused side project built with FastAPI, SQLAlchemy, and BS-RoFormer.
 
-Early development.
+## Features
 
-The initial source-separation feasibility spike has been completed, with BS-RoFormer-SW selected as the current model for the first version.
+- Register and log in with email and password
+- Authenticate requests using short-lived JWT access tokens
+- Upload WAV audio files
+- Create background source-separation jobs
+- Retrieve processing status and download generated stems
+- Persist users, uploads, jobs, and output metadata in SQLite
+- Restrict uploads, jobs, and downloads to their owners
 
-The backend currently supports an end-to-end WAV processing flow:
+The current model produces vocals, drums, bass, guitar, piano, other, and instrumental outputs.
 
-- upload an audio file
-- create a processing job
-- run BS-RoFormer source separation in the background
-- persist job status and generated output metadata
-- retrieve jobs across server restarts
-- download generated stems through the API
+## Current Limitations
 
-Current limitations:
+- Source separation supports WAV input only
+- Audio files are stored on the local filesystem
+- Metadata is stored in SQLite
+- Processing uses in-process FastAPI background tasks
+- Interrupted jobs are not automatically resumed after a restart
+- Authentication uses access tokens only; refresh tokens are not implemented
 
-- source separation currently supports WAV input only
-- metadata is stored in a local SQLite database
-- uploaded and generated audio is stored on the local filesystem
-- processing currently runs as an in-process FastAPI background task rather than through a dedicated worker
-- interrupted processing jobs are not automatically resumed after a server restart
-- authentication and user accounts are not yet implemented
-
-## How It Works
+## Architecture
 
 ```text
-WAV upload
-    ↓
-processing job
-    ↓
-BS-RoFormer source separation
-    ↓
-generated stems
-    ↓
-download through API
+Client
+  ↓
+FastAPI — authentication and ownership checks
+  ├── SQLAlchemy repositories → SQLite metadata
+  └── Background task → BS-RoFormer → local audio files
 ```
 
-The current model produces the following outputs:
+The application loads one model session during startup and reuses it across processing jobs.
 
-- vocals
-- drums
-- bass
-- guitar
-- piano
-- other
-- instrumental
+Users own uploads. Job and output ownership is derived through the associated upload. Alembic manages database schema changes.
 
 ## Setup
+
+Development currently takes place in Ubuntu through WSL2.
 
 ### Prerequisites
 
 - Python 3.12+
 - Git
-- NVIDIA GPU with a compatible CUDA environment for GPU inference
+- NVIDIA GPU and a compatible CUDA-enabled PyTorch environment for GPU inference
 
-IsoJam is currently developed and tested primarily in Linux/WSL2.
+### Install Dependencies
 
-### Install
-
-Clone the repository and enter the backend directory:
+Clone the repository and create a virtual environment:
 
 ```bash
 git clone https://github.com/Ian0520/isojam.git
 cd isojam/backend
-```
 
-Create and activate a virtual environment:
-
-```bash
 python3 -m venv .venv
 source .venv/bin/activate
 ```
 
-Install the backend and its dependencies:
+Install the backend dependencies:
 
 ```bash
-python -m pip install -e .
+python -m pip install \
+  fastapi uvicorn python-multipart \
+  "sqlalchemy>=2.0,<3.0" alembic \
+  "pwdlib[argon2]" email-validator pyjwt \
+  "bs-roformer-infer @ git+https://github.com/openmirlab/bs-roformer-infer.git@de35ada5817b878da0194ee2860253dda3a9c2b2"
 ```
 
-Apply the database migrations:
+Dependencies are declared in `backend/pyproject.toml`. Direct installation is currently used while editable package configuration is being completed.
+
+The inference dependency is pinned to an upstream commit that provides the programmatic `BSRoformerSession` API.
+
+### Initialize the Database
+
+From the `backend` directory:
 
 ```bash
 alembic upgrade head
 ```
 
-The BS-RoFormer inference dependency is pinned to a specific upstream Git commit to use the programmatic `BSRoformerSession` API.
+Metadata is stored in the project-level `data/isojam.db`. Uploaded and generated audio is stored under `data/`.
+
+The ownership migration assumes there are no existing uploads without owners. Migrating an older database containing such uploads requires a separate data-migration plan.
+
+### Configure Authentication
+
+Generate a random signing secret once:
+
+```bash
+python -c "import secrets; print(secrets.token_hex(32))"
+```
+
+Keep that value securely outside the repository and set it in the shell used to start the application:
+
+```bash
+export ISOJAM_JWT_SECRET_KEY='replace-with-your-generated-secret'
+```
+
+Reuse the same secret across restarts. Changing it invalidates previously issued access tokens.
+
+Startup fails if the environment variable is missing or blank.
 
 ## Running
 
-From the `backend` directory with the virtual environment activated:
+From `backend`, with the virtual environment activated and the signing secret configured:
 
 ```bash
 uvicorn app.main:app --reload
 ```
 
-The interactive API documentation is available at:
+Interactive API documentation is available at:
 
-```text
-http://127.0.0.1:8000/docs
-```
+[http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)
 
-Database schema changes are managed with Alembic. Run `alembic upgrade head` after installing dependencies and whenever new migrations are added.
-
-Upload, job, and output metadata are persisted in `data/isojam.db`.
-
-The source-separation model is loaded when the application starts and reused across processing jobs.
+Apply pending migrations with `alembic upgrade head` before starting an updated application.
 
 ## Usage
 
-The current API flow is:
-
-### 1. Upload a WAV file
-
 ```text
-POST /uploads
+Register → Log in → Upload WAV → Create job → Poll status → Download stems
 ```
 
-The response contains an upload ID.
+### 1. Register and Log In
 
-### 2. Create a processing job
-
-```text
-POST /jobs
-```
-
-Use the upload ID returned by the previous request.
-
-### 3. Retrieve job status
-
-```text
-GET /jobs/{job_id}
-```
-
-A completed job includes output URLs for the generated stems.
-
-Example:
+Create an account with `POST /register`, then authenticate with `POST /login`. Both endpoints accept JSON:
 
 ```json
 {
-  "id": "job-id",
+  "email": "user@example.com",
+  "password": "your-password"
+}
+```
+
+Registration returns the user's ID and email. Login returns:
+
+```json
+{
+  "access_token": "...",
+  "token_type": "bearer"
+}
+```
+
+Include the token in subsequent upload, job, and download requests:
+
+```http
+Authorization: Bearer <access_token>
+```
+
+Access tokens expire after 30 minutes by default. Log in again to obtain a new token.
+
+### 2. Upload a WAV File
+
+Send `POST /uploads` as multipart form data, using `audio_file` as the file field.
+
+The response contains the upload ID.
+
+### 3. Create a Processing Job
+
+Send `POST /jobs` with the upload ID:
+
+```json
+{
+  "upload_id": "<upload-id>"
+}
+```
+
+The upload must belong to the authenticated user. The response contains a job ID.
+
+### 4. Check Processing Status
+
+Poll `GET /jobs/{job_id}`.
+
+Jobs have one of four statuses: `pending`, `processing`, `completed`, or `failed`. A completed job includes download URLs:
+
+```json
+{
+  "id": "<job-id>",
   "status": "completed",
-  "upload_id": "upload-id",
+  "upload_id": "<upload-id>",
   "outputs": {
-    "guitar": "/jobs/job-id/outputs/guitar",
-    "vocals": "/jobs/job-id/outputs/vocals"
+    "guitar": "/jobs/<job-id>/outputs/guitar",
+    "vocals": "/jobs/<job-id>/outputs/vocals"
   }
 }
 ```
 
-### 4. Download a generated stem
+### 5. Download a Stem
 
-```text
-GET /jobs/{job_id}/outputs/{stem}
-```
+Request `GET /jobs/{job_id}/outputs/{stem}` with the same bearer authentication.
 
-For example:
-
-```text
-GET /jobs/{job_id}/outputs/guitar
-```
-
-## Current Architecture
-
-```text
-FastAPI API
-    ↓
-SQLite metadata persistence
-    ↓
-in-process background task
-    ↓
-processing layer
-    ↓
-source-separation adapter
-    ↓
-BSRoformerSession
-    ↓
-BS-RoFormer-SW
-    ↓
-local filesystem storage
-```
-
-The FastAPI application owns a single model session through its application lifespan. Processing jobs reuse that session instead of loading the model for every request.
-
-SQLite stores upload, job, and generated-output metadata, while uploaded files and generated stems are stored on the local filesystem under the project-level `data/` directory.
-
-Database schema evolution is managed through Alembic migrations.
+Downloads are available when the job is completed. Missing resources and resources owned by another user return 404. Missing or invalid authentication returns 401.
 
 ## Testing
 
-From the `backend` directory:
+Tests use temporary databases and storage, fake model sessions, and test signing secrets.
+
+From `backend`, install the test dependencies if needed:
+
+```bash
+python -m pip install pytest httpx2
+```
+
+Run the full suite:
 
 ```bash
 python -m pytest
 ```
 
-The test suite covers the API, database persistence and initialization, local storage, job lifecycle, processing orchestration, source-separation adapter, model-session integration boundaries, and output downloads.
+Coverage includes registration, login, token validation, ownership enforcement, migrations, persistence, storage, processing orchestration, model integration boundaries, and output downloads.
 
-## Documentation
+## Further Documentation
 
 - [Project Scope](docs/project-scope.md)
 - [Model Compatibility Spike](docs/model-spike.md)
