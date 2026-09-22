@@ -63,6 +63,7 @@ def test_upload_file(
         assert saved_file.exists()  
         assert saved_file.read_bytes() == b"fake audio data"
 
+
 def test_rejects_unsupported_file_type(
     client,
     tmp_path, 
@@ -101,6 +102,7 @@ def test_rejects_unsupported_file_type(
     assert data["detail"] == "Unsupported audio type"
     assert not upload_dir.exists()
 
+
 def test_upload_requires_authentication(client, tmp_path, monkeypatch):
     upload_dir = tmp_path / "uploads"
     monkeypatch.setattr(storage, "UPLOAD_DIR", upload_dir)
@@ -116,4 +118,56 @@ def test_upload_requires_authentication(client, tmp_path, monkeypatch):
 
     assert response.status_code == 401
     assert response.headers.get("WWW-Authenticate") == "Bearer"
+    assert not upload_dir.exists()
+
+
+def test_rejects_mp3_upload(
+    client,
+    tmp_path,
+    monkeypatch,
+    auth_headers,
+):
+    upload_dir = tmp_path / "uploads"
+    monkeypatch.setattr(storage, "UPLOAD_DIR", upload_dir)
+
+    response = client.post(
+        "/uploads",
+        files={
+            "audio_file": (
+                "test.mp3",
+                b"fake audio data",
+                "audio/mpeg",
+            )
+        },
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 415
+    assert response.json()["detail"] == "Unsupported audio type"
+    assert not upload_dir.exists()
+
+
+def test_rejects_non_wav_filename(
+    client,
+    tmp_path,
+    monkeypatch,
+    auth_headers,
+):
+    upload_dir = tmp_path / "uploads"
+    monkeypatch.setattr(storage, "UPLOAD_DIR", upload_dir)
+
+    response = client.post(
+        "/uploads",
+        files={
+            "audio_file": (
+                "test.mp3",
+                b"fake audio data",
+                "audio/wav",
+            )
+        },
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 415
+    assert response.json()["detail"] == "Unsupported audio type"
     assert not upload_dir.exists()

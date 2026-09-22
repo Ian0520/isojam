@@ -21,7 +21,6 @@ from datetime import timedelta
 
 ALLOWED_AUDIO_TYPES = {
     "audio/wav",
-    "audio/mpeg",
 }
 
 class CreateJobRequest(BaseModel):
@@ -77,7 +76,10 @@ def create_app(
         current_user: User = Depends(get_current_user),
     ):
         # Check if type is allowed
-        if audio_file.content_type not in ALLOWED_AUDIO_TYPES:
+        if (
+            audio_file.content_type not in ALLOWED_AUDIO_TYPES
+            or Path(audio_file.filename or "").suffix.lower() != ".wav"
+        ):
             raise HTTPException(
                 status_code=415,
                 detail="Unsupported audio type",
