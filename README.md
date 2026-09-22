@@ -64,14 +64,10 @@ source .venv/bin/activate
 Install the backend dependencies:
 
 ```bash
-python -m pip install \
-  fastapi uvicorn python-multipart \
-  "sqlalchemy>=2.0,<3.0" alembic \
-  "pwdlib[argon2]" email-validator pyjwt \
-  "bs-roformer-infer @ git+https://github.com/openmirlab/bs-roformer-infer.git@de35ada5817b878da0194ee2860253dda3a9c2b2"
+python -m pip install -e .
 ```
 
-Dependencies are declared in `backend/pyproject.toml`. Direct installation is currently used while editable package configuration is being completed.
+Dependencies are declared in `backend/pyproject.toml`. The editable install keeps the virtual environment linked to the local source tree during development.
 
 The inference dependency is pinned to an upstream commit that provides the programmatic `BSRoformerSession` API.
 
