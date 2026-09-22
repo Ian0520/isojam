@@ -6,40 +6,58 @@ import app.repositories.job_outputs as job_outputs
 from uuid import UUID
 
 def process_job(job_id: UUID, model_session, db_session_factory):
-    with db_session_factory() as db:
-        job = jobs.get_job(db, job_id)
+    with db_session_factory() as session:
+        job = jobs.get_job(session, job_id)
         if job is None:
             raise KeyError("job not found") 
         upload_id = job.upload_id
-        upload = uploads.get_upload(db, upload_id)
+        upload = uploads.get_upload(session, upload_id)
         if upload is None:
-            jobs.update_job_status(db, job_id, "failed")
-            db.commit()
+            jobs.update_job_status(session, job_id, "failed")
+            session.commit()
             raise RuntimeError("upload not found")
         stored_filename = upload.stored_filename
 
     input_path = storage.get_upload_path(stored_filename)
     if not input_path.exists():
-        with db_session_factory() as db:
-            jobs.update_job_status(db, job_id, "failed")
-            db.commit()
+        with db_session_factory() as session:
+            jobs.update_job_status(session, job_id, "failed")
+            session.commit()
             raise FileNotFoundError("file not found")
 
-    with db_session_factory() as db:
-        job = jobs.update_job_status(db, job_id, "processing")
-        db.commit()
-    output_dir = storage.get_job_output_dir(job_id)
+    with db_session_factory() as session:
+        jobs.update_job_status(session, job_id, "processing")
+        session.commit()
     try:
-        paths = separation.separate_audio(input_path, output_dir, model_session)
-    except Exception:
-        with db_session_factory() as db:
-            jobs.update_job_status(db, job_id, "failed")
-            db.commit()
-            raise
+        output_dir = storage.get_job_output_dir(job_id)
+        paths = separation.separate_audio(
+            input_path,
+            output_dir,
+            model_session,
+        )
 
-    with db_session_factory() as db:
-        for stem, path in paths.items():
-            job_outputs.create_job_output(db, job_id, stem, str(path))
-        job = jobs.update_job_status(db, job_id, "completed")
-        db.commit()
+        with db_session_factory() as session:
+            for stem, path in paths.items():
+                job_outputs.create_job_output(
+                    session,
+                    job_id,
+                    stem,
+                    str(path),
+                )
+
+            jobs.update_job_status(
+                session,
+                job_id,
+                "completed",
+            )
+            session.commit()
+    except Exception:
+        with db_session_factory() as session:
+            jobs.update_job_status(
+                session,
+                job_id,
+                "failed",
+            )
+            session.commit()
+        raise
     

@@ -11,6 +11,7 @@ from uuid import uuid4
 import pytest
 from types import SimpleNamespace
 
+
 class FakeSession:
     def __init__(self):
         self.called = False
@@ -24,9 +25,11 @@ class FakeSession:
         manifest = SimpleNamespace(outputs=[fake_guitar_output])
         return manifest
 
+
 class FailingSession:
     def infer(self, input_folder, *, store_dir):
         raise RuntimeError("inference failed")
+
     
 def test_process_job_completes_with_outputs(tmp_path, monkeypatch, test_session_factory):
     monkeypatch.setattr(storage, "UPLOAD_DIR", tmp_path)
@@ -68,6 +71,7 @@ def test_process_job_raises_for_missing_job(test_session_factory):
         processing.process_job(fake_job_id, model_session, test_session_factory)
     assert not model_session.called
 
+
 def test_process_job_fails_when_upload_is_missing(test_session_factory, monkeypatch):
     with test_session_factory() as session:
         user = create_test_user(session)
@@ -89,6 +93,7 @@ def test_process_job_fails_when_upload_is_missing(test_session_factory, monkeypa
         assert result.status == "failed"
     assert not model_session.called
 
+
 def test_process_job_fails_when_file_is_missing(tmp_path, monkeypatch, test_session_factory):
     monkeypatch.setattr(storage, "UPLOAD_DIR", tmp_path)
 
@@ -107,6 +112,7 @@ def test_process_job_fails_when_file_is_missing(tmp_path, monkeypatch, test_sess
         result = jobs.get_job(session, job_id)
         assert result.status == "failed"
     assert not model_session.called
+
 
 def test_process_job_fails_when_separation_crashes(tmp_path, monkeypatch, test_session_factory):
     monkeypatch.setattr(storage, "UPLOAD_DIR", tmp_path)
@@ -131,3 +137,49 @@ def test_process_job_fails_when_separation_crashes(tmp_path, monkeypatch, test_s
         result = jobs.get_job(session, job_id)
         assert result.status == "failed"
 
+
+def test_process_job_marks_failed_when_output_persistence_fails(
+    tmp_path,
+    monkeypatch,
+    test_session_factory,
+):
+    monkeypatch.setattr(storage, "UPLOAD_DIR", tmp_path)
+    monkeypatch.setattr(storage, "OUTPUT_DIR", tmp_path / "outputs")
+
+    input_path = tmp_path / "test.wav"
+    input_path.write_bytes(b"fake audio file")
+
+    with test_session_factory() as session:
+        user = create_test_user(session)
+        upload = create_test_upload(
+            session,
+            user,
+            stored_filename="test.wav",
+        )
+        job = create_test_job(session, upload)
+        job_id = job.id
+        session.commit()
+
+    def fail_create_job_output(session, job_id, stem, path):
+        raise RuntimeError("output persistence failed")
+
+    monkeypatch.setattr(
+        job_outputs,
+        "create_job_output",
+        fail_create_job_output,
+    )
+
+    model_session = FakeSession()
+
+    with pytest.raises(RuntimeError, match="output persistence failed"):
+        processing.process_job(
+            job_id,
+            model_session,
+            test_session_factory,
+        )
+
+    with test_session_factory() as session:
+        job_result = jobs.get_job(session, job_id)
+        assert job_result.status == "failed"
+        assert job_outputs.get_job_outputs(session, job_id) == []
+    
