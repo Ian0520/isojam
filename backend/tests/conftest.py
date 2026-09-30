@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from app.database import enable_sqlite_foreign_keys, get_db
+from app.database import enable_sqlite_foreign_keys
 from app.db_models import Base
 from app.main import create_app
 from app.security import create_access_token
@@ -45,10 +45,6 @@ def client(
     test_session_factory,
     jwt_secret_key,
 ):
-    def override_get_db():
-        with test_session_factory() as session:
-            yield session
-
     def fake_factory():
         return fake_model_session
 
@@ -57,8 +53,6 @@ def client(
         db_session_factory=test_session_factory,
         jwt_secret_key=jwt_secret_key,
     )
-
-    test_app.dependency_overrides[get_db] = override_get_db
 
     with TestClient(test_app) as test_client:
         yield test_client

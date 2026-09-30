@@ -74,6 +74,7 @@ def create_app(
             session.close()
 
     app = FastAPI(lifespan=lifespan)
+    app.state.db_session_factory = db_session_factory
 
     @app.get("/health")
     def health():
@@ -132,7 +133,7 @@ def create_app(
             process_job,
             job_id,
             request.app.state.model_session,
-            db_session_factory,
+            request.app.state.db_session_factory,
         )
 
         return serialize_job(job, [])

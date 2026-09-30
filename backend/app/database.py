@@ -1,7 +1,9 @@
+from collections.abc import Generator
 from pathlib import Path
 
+from fastapi import Request
 from sqlalchemy import create_engine, event
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import Session, sessionmaker
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DATABASE_PATH = PROJECT_ROOT / "data" / "isojam.db"
@@ -30,6 +32,6 @@ enable_sqlite_foreign_keys(engine)
 SessionLocal = sessionmaker(engine)
 
 
-def get_db():
-    with SessionLocal() as session:
+def get_db(request: Request) -> Generator[Session, None, None]:
+    with request.app.state.db_session_factory() as session:
         yield session
