@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from pathlib import Path
 from uuid import UUID
 
@@ -7,10 +8,10 @@ from sqlalchemy.orm import Session
 
 from app.auth import get_current_user
 from app.database import get_db
-from app.db_models import Job, User
+from app.db_models import Job, JobOutput, User
 from app.processing import process_job
 from app.repositories import job_outputs, jobs, uploads
-from app.schemas import CreateJobRequest
+from app.schemas import CreateJobRequest, JobResponse
 
 router = APIRouter()
 
@@ -30,31 +31,26 @@ def _get_owned_job(
     raise HTTPException(status_code=404, detail=not_found_detail)
 
 
-def serialize_job(job, outputs):
-    job_id = job.id
-    status = job.status
-    upload_id = job.upload_id
-
-    output_urls = {}
-    for output in outputs:
-        output_urls[output.stem] = f"/jobs/{job_id}/outputs/{output.stem}"
-    serialized_job = {
-        "id": job_id,
-        "status": status,
-        "upload_id": upload_id,
-        "outputs": output_urls,
+def serialize_job(job: Job, outputs: Sequence[JobOutput]) -> JobResponse:
+    output_urls = {
+        output.stem: f"/jobs/{job.id}/outputs/{output.stem}" for output in outputs
     }
-    return serialized_job
+    return JobResponse(
+        id=job.id,
+        status=job.status,
+        upload_id=job.upload_id,
+        outputs=output_urls,
+    )
 
 
-@router.post("/jobs")
+@router.post("/jobs", response_model=JobResponse)
 def create_job_endpoint(
     upload_request: CreateJobRequest,
     background_tasks: BackgroundTasks,
     request: Request,
     session: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
-):
+) -> JobResponse:
     upload_id = upload_request.upload_id
     upload = uploads.get_upload(session, upload_id)
     if upload is None or current_user.id != upload.user_id:
@@ -73,12 +69,12 @@ def create_job_endpoint(
     return serialize_job(job, [])
 
 
-@router.get("/jobs/{job_id}")
+@router.get("/jobs/{job_id}", response_model=JobResponse)
 def get_job_endpoint(
     job_id: UUID,
     session: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
-):
+) -> JobResponse:
     job = _get_owned_job(
         session,
         job_id,

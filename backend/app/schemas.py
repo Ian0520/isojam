@@ -23,5 +23,18 @@ class TokenResponse(BaseModel):
     token_type: str
 
 
+class UploadResponse(BaseModel):
+    id: UUID
+    filename: str
+    content_type: str
+
+
 class CreateJobRequest(BaseModel):
     upload_id: UUID
+
+
+class JobResponse(BaseModel):
+    id: UUID
+    status: str
+    upload_id: UUID
+    outputs: dict[str, str]

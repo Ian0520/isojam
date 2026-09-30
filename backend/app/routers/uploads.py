@@ -7,6 +7,7 @@ from app.auth import get_current_user
 from app.database import get_db
 from app.db_models import User
 from app.repositories import uploads
+from app.schemas import UploadResponse
 from app.storage import save_upload
 
 router = APIRouter()
@@ -16,12 +17,12 @@ ALLOWED_AUDIO_TYPES = {
 }
 
 
-@router.post("/uploads")
+@router.post("/uploads", response_model=UploadResponse)
 def upload_file(
     audio_file: UploadFile,
     session: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
-):
+) -> UploadResponse:
     # Check if type is allowed
     if (
         audio_file.content_type not in ALLOWED_AUDIO_TYPES
@@ -43,8 +44,8 @@ def upload_file(
     upload_id = upload_record.id
     session.commit()
 
-    return {
-        "id": upload_id,
-        "filename": audio_file.filename,
-        "content_type": audio_file.content_type,
-    }
+    return UploadResponse(
+        id=upload_id,
+        filename=audio_file.filename,
+        content_type=audio_file.content_type,
+    )
