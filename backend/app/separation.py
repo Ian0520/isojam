@@ -19,7 +19,7 @@ def separate_audio(
     output_dir.mkdir(parents=True, exist_ok=True)
     with TemporaryDirectory() as temp_dir:
         temp_dir_path = Path(temp_dir)
-        temp_input_path = temp_dir_path / input_path.name
+        temp_input_path = temp_dir_path / input_path.with_suffix(".wav").name
         temp_input_path.symlink_to(input_path.resolve())
         manifest = session.infer(temp_dir_path, store_dir=output_dir)
     return collect_output_paths(manifest)
