@@ -5,9 +5,9 @@ from uuid import UUID, uuid4
 import pytest
 from sqlalchemy import select
 
-import app.main as main
 import app.repositories.job_outputs as job_outputs
 import app.repositories.jobs as jobs
+import app.routers.jobs as job_routes
 import app.storage as storage
 from app.db_models import Job, JobOutput
 from app.security import create_access_token
@@ -249,7 +249,7 @@ def test_create_job_rejects_another_users_upload(
     )
 
     process_job_mock = Mock()
-    monkeypatch.setattr(main, "process_job", process_job_mock)
+    monkeypatch.setattr(job_routes, "process_job", process_job_mock)
 
     response = client.post(
         "/jobs",
