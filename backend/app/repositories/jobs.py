@@ -1,24 +1,29 @@
-from app.db_models import Job
 from uuid import UUID
 
-ALLOWED_STATUSES = {"pending",
-                    "processing", 
-                    "completed", 
-                    "failed"}
+from sqlalchemy.orm import Session
 
-def create_job(session, upload_id: UUID):
-    new_job = Job(upload_id=upload_id,
-                   status="pending"
-                   )
+from app.db_models import Job
+
+ALLOWED_STATUSES = {"pending", "processing", "completed", "failed"}
+
+
+def create_job(session: Session, upload_id: UUID) -> Job:
+    new_job = Job(upload_id=upload_id, status="pending")
 
     session.add(new_job)
     session.flush()
     return new_job
 
-def get_job(session, job_id):
+
+def get_job(session: Session, job_id: UUID) -> Job | None:
     return session.get(Job, job_id)
 
-def update_job_status(session, job_id: UUID, status: str):
+
+def update_job_status(
+    session: Session,
+    job_id: UUID,
+    status: str,
+) -> Job | None:
     job = get_job(session, job_id)
     if job is None:
         return None

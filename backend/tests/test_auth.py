@@ -1,18 +1,20 @@
-from app.db_models import User
-from app.security import verify_password, decode_access_token
-from app.repositories import users
-from app.main import create_app
-from app.database import get_db
-from app.auth import get_current_user
-from tests.factories import create_test_user
-from app.security import create_access_token
-
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
+
+import jwt
+from fastapi import Depends
+from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
-from fastapi.testclient import TestClient
-from fastapi import Depends
+
+from app.auth import get_current_user
+from app.database import get_db
+from app.db_models import User
+from app.main import create_app
+from app.repositories import users
+from app.security import create_access_token, decode_access_token, verify_password
+from tests.factories import create_test_user
+
 
 def test_register_creates_user(client, test_session_factory):
     email = "user@example.com"
@@ -42,7 +44,8 @@ def test_register_creates_user(client, test_session_factory):
         assert user.email == email
         assert user.password_hash != password
         assert verify_password(password, user.password_hash)
-    
+
+
 def test_register_normalizes_email(client, test_session_factory):
     submitted_email = "User@Example.COM"
     expected_email = "user@example.com"
@@ -62,6 +65,7 @@ def test_register_normalizes_email(client, test_session_factory):
         user = session.scalars(statement).one_or_none()
         assert user is not None
         assert user.email == expected_email
+
 
 def test_register_rejects_duplicate_email(client):
     response = client.post(
@@ -91,17 +95,15 @@ def test_register_handles_duplicate_email_race(client, monkeypatch):
             params=None,
             orig=Exception("Duplicate email"),
         )
+
     monkeypatch.setattr(users, "create_user", simulate_duplicate_email)
 
     email = "user@example.com"
     password = "correct-horse-battery-staple"
-    response = client.post("/register"
-                    , json={
-                        "email": email,
-                        "password": password
-                    })
+    response = client.post("/register", json={"email": email, "password": password})
     assert response.status_code == 409
     assert response.json()["detail"] == "Email is already registered"
+
 
 def test_login_returns_access_token(client, jwt_secret_key):
     email = "user@example.com"
@@ -138,6 +140,7 @@ def test_login_returns_access_token(client, jwt_secret_key):
     )
 
     assert decoded_user_id == registered_user_id
+
 
 def test_login_normalizes_email(client):
     normalized_email = "user@example.com"
@@ -181,14 +184,11 @@ def test_login_rejects_incorrect_password(client):
     assert register_response.status_code == 201
 
     login_response = client.post(
-        "/login",
-        json={
-            "email": email,
-            "password": "incorrect-password"
-        }
+        "/login", json={"email": email, "password": "incorrect-password"}
     )
     assert login_response.status_code == 401
     assert login_response.json()["detail"] == "Invalid email or password"
+
 
 def test_login_rejects_unknown_email(client):
     email = "user@example.com"
@@ -198,10 +198,11 @@ def test_login_rejects_unknown_email(client):
         json={
             "email": email,
             "password": password,
-        }
+        },
     )
     assert login_response.status_code == 401
     assert login_response.json()["detail"] == "Invalid email or password"
+
 
 def test_login_uses_jwt_secret_key_from_environment(
     fake_model_session,
@@ -210,6 +211,7 @@ def test_login_uses_jwt_secret_key_from_environment(
     monkeypatch,
 ):
     monkeypatch.setenv("ISOJAM_JWT_SECRET_KEY", jwt_secret_key)
+
     def override_get_db():
         with test_session_factory() as session:
             yield session
@@ -232,7 +234,7 @@ def test_login_uses_jwt_secret_key_from_environment(
             json={
                 "email": email,
                 "password": password,
-            }
+            },
         )
         assert register_response.status_code == 201
         user_id = UUID(register_response.json()["id"])
@@ -242,7 +244,7 @@ def test_login_uses_jwt_secret_key_from_environment(
             json={
                 "email": email,
                 "password": password,
-            }
+            },
         )
         assert login_response.status_code == 200
         access_token = login_response.json()["access_token"]
@@ -250,14 +252,16 @@ def test_login_uses_jwt_secret_key_from_environment(
         decoded_user_id = decode_access_token(access_token, jwt_secret_key)
         assert user_id == decoded_user_id
 
+
 def test_get_current_user_rejects_missing_token(client):
     @client.app.get("/test/current-user")
     def current_user_endpoint(current_user=Depends(get_current_user)):
         return {"id": str(current_user.id)}
-    
+
     response = client.get("/test/current-user")
     assert response.status_code == 401
     assert response.headers.get("WWW-Authenticate") == "Bearer"
+
 
 def test_get_current_user_returns_authenticated_user(
     client,
@@ -280,18 +284,19 @@ def test_get_current_user_returns_authenticated_user(
         return {"id": str(current_user.id)}
 
     response = client.get(
-    "/test/current-user",
-    headers={"Authorization": f"Bearer {access_token}"},
+        "/test/current-user",
+        headers={"Authorization": f"Bearer {access_token}"},
     )
 
     assert response.status_code == 200
     assert response.json()["id"] == str(user_id)
 
+
 def test_get_current_user_rejects_invalid_token(client):
     @client.app.get("/test/current-user")
     def current_user_endpoint(current_user=Depends(get_current_user)):
         return {"id": str(current_user.id)}
-    
+
     response = client.get(
         "/test/current-user",
         headers={"Authorization": "Bearer not-a-valid-jwt"},
@@ -299,6 +304,7 @@ def test_get_current_user_rejects_invalid_token(client):
 
     assert response.status_code == 401
     assert response.headers.get("WWW-Authenticate") == "Bearer"
+
 
 def test_get_current_user_rejects_expired_token(
     client,
@@ -321,12 +327,13 @@ def test_get_current_user_rejects_expired_token(
         return {"id": str(current_user.id)}
 
     response = client.get(
-    "/test/current-user",
-    headers={"Authorization": f"Bearer {access_token}"},
+        "/test/current-user",
+        headers={"Authorization": f"Bearer {access_token}"},
     )
 
     assert response.status_code == 401
     assert response.headers.get("WWW-Authenticate") == "Bearer"
+
 
 def test_get_current_user_rejects_wrong_signing_key(
     client,
@@ -348,12 +355,13 @@ def test_get_current_user_rejects_wrong_signing_key(
         return {"id": str(current_user.id)}
 
     response = client.get(
-    "/test/current-user",
-    headers={"Authorization": f"Bearer {access_token}"},
+        "/test/current-user",
+        headers={"Authorization": f"Bearer {access_token}"},
     )
 
     assert response.status_code == 401
     assert response.headers.get("WWW-Authenticate") == "Bearer"
+
 
 def test_get_current_user_rejects_nonexistent_user(client, jwt_secret_key):
     user_id = uuid4()
@@ -368,12 +376,13 @@ def test_get_current_user_rejects_nonexistent_user(client, jwt_secret_key):
         return {"id": str(current_user.id)}
 
     response = client.get(
-    "/test/current-user",
-    headers={"Authorization": f"Bearer {access_token}"},
+        "/test/current-user",
+        headers={"Authorization": f"Bearer {access_token}"},
     )
 
     assert response.status_code == 401
     assert response.headers.get("WWW-Authenticate") == "Bearer"
+
 
 def test_register_rejects_empty_password(client, test_session_factory):
     email = "user@example.com"
@@ -382,11 +391,52 @@ def test_register_rejects_empty_password(client, test_session_factory):
         json={
             "email": email,
             "password": "",
-        }
+        },
     )
     assert response.status_code == 422
     with test_session_factory() as session:
         statement = select(User).where(User.email == email)
         user = session.scalars(statement).one_or_none()
         assert user is None
-    
+
+
+def test_login_uses_injected_token_lifetime(
+    fake_model_session,
+    test_session_factory,
+    jwt_secret_key,
+):
+    expires_delta = timedelta(minutes=7)
+
+    def fake_factory():
+        return fake_model_session
+
+    test_app = create_app(
+        model_session_factory=fake_factory,
+        db_session_factory=test_session_factory,
+        jwt_secret_key=jwt_secret_key,
+        access_token_expires_delta=expires_delta,
+    )
+
+    with TestClient(test_app) as client:
+        credentials = {
+            "email": "user@example.com",
+            "password": "correct-horse-battery-staple",
+        }
+        register_response = client.post("/register", json=credentials)
+        assert register_response.status_code == 201
+
+        before_login = datetime.now(timezone.utc)
+        response = client.post("/login", json=credentials)
+        after_login = datetime.now(timezone.utc)
+        assert response.status_code == 200
+
+    payload = jwt.decode(
+        response.json()["access_token"],
+        key=jwt_secret_key,
+        algorithms=["HS256"],
+    )
+    assert (
+        int((before_login + expires_delta).timestamp())
+        <= payload["exp"]
+        <= int((after_login + expires_delta).timestamp())
+    )

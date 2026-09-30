@@ -1,58 +1,24 @@
-from app.repositories import jobs, uploads, users, job_outputs
-from app.storage import save_upload
-from app.processing import process_job
-from app.model import create_model_session
-from app.database import get_db, SessionLocal
-from app.schemas import RegisterRequest, UserResponse, LoginRequest, TokenResponse
-from app.security import hash_password, verify_password, create_access_token
-from app.config import get_jwt_secret_key
-from app.auth import get_current_user
-from app.db_models import User
-
-from fastapi import FastAPI, UploadFile, HTTPException, BackgroundTasks, Request, Depends
-from pathlib import Path
-from fastapi.responses import FileResponse
-from sqlalchemy.orm import Session
-from sqlalchemy.exc import IntegrityError
-from pydantic import BaseModel
 from contextlib import asynccontextmanager
-from uuid import UUID
 from datetime import timedelta
 
-ALLOWED_AUDIO_TYPES = {
-    "audio/wav",
-    "audio/mpeg",
-}
+from fastapi import FastAPI
 
-class CreateJobRequest(BaseModel):
-    upload_id: UUID
-
-def serialize_job(job, outputs):
-    job_id = job.id
-    status = job.status
-    upload_id = job.upload_id
-
-    output_urls = {}
-    for output in outputs:
-        output_urls[output.stem] = f"/jobs/{job_id}/outputs/{output.stem}"
-    serialized_job = {
-        "id": job_id,
-        "status": status,
-        "upload_id": upload_id,
-        "outputs": output_urls,
-    }
-    return serialized_job
-
+from app.config import ACCESS_TOKEN_EXPIRES_DELTA, get_jwt_secret_key
+from app.database import SessionLocal
+from app.model import create_model_session
+from app.routers.auth import router as auth_router
+from app.routers.jobs import router as jobs_router
+from app.routers.uploads import router as uploads_router
 
 
 def create_app(
-        model_session_factory=create_model_session, 
-        db_session_factory=SessionLocal,
-        jwt_secret_key: str | None = None,
-        access_token_expires_delta=timedelta(minutes=30),
+    model_session_factory=create_model_session,
+    db_session_factory=SessionLocal,
+    jwt_secret_key: str | None = None,
+    access_token_expires_delta: timedelta = ACCESS_TOKEN_EXPIRES_DELTA,
 ):
     @asynccontextmanager
-    async def lifespan(app: FastAPI):      
+    async def lifespan(app: FastAPI):
         app.state.jwt_secret_key = (
             jwt_secret_key if jwt_secret_key is not None else get_jwt_secret_key()
         )
@@ -65,197 +31,19 @@ def create_app(
             session.close()
 
     app = FastAPI(lifespan=lifespan)
+    app.state.db_session_factory = db_session_factory
+    app.state.access_token_expires_delta = access_token_expires_delta
 
     @app.get("/health")
     def health():
         return {"status": "ok"}
 
-    @app.post("/uploads")
-    def upload_file(
-        audio_file: UploadFile, 
-        session: Session = Depends(get_db),
-        current_user: User = Depends(get_current_user),
-    ):
-        # Check if type is allowed
-        if audio_file.content_type not in ALLOWED_AUDIO_TYPES:
-            raise HTTPException(
-                status_code=415,
-                detail="Unsupported audio type",
-            )
+    app.include_router(uploads_router)
 
-        saved_path = save_upload(audio_file)
+    app.include_router(jobs_router)
+    app.include_router(auth_router)
 
-        upload_record = uploads.create_upload(
-            session=session, 
-            original_filename=audio_file.filename,
-            stored_filename=saved_path.name,
-            user_id=current_user.id,
-        )
-        upload_id = upload_record.id
-        session.commit()
-
-        return {
-            "id": upload_id,
-            "filename": audio_file.filename,
-            "content_type": audio_file.content_type,
-        }
-
-    @app.post("/jobs")
-    def create_job_endpoint(
-            upload_request: CreateJobRequest,
-            background_tasks: BackgroundTasks,
-            request: Request,
-            session: Session = Depends(get_db),
-            current_user: User = Depends(get_current_user),
-    ):
-        upload_id = upload_request.upload_id
-        upload = uploads.get_upload(session, upload_id)
-        if upload is None or current_user.id != upload.user_id:
-            raise HTTPException(
-                status_code=404,
-                detail="The upload does not exist"
-            )
-        job = jobs.create_job(session, upload_id)
-        job_id = job.id
-        session.commit()
-        
-        background_tasks.add_task(
-            process_job,
-            job_id,
-            request.app.state.model_session,
-            db_session_factory,
-        )
-
-        return serialize_job(job, [])
-
-    @app.get("/jobs/{job_id}")
-    def get_job_endpoint(
-        job_id: UUID,
-        session: Session = Depends(get_db),
-        current_user: User = Depends(get_current_user),
-        ):
-        job = jobs.get_job(session, job_id)
-        if job is None:
-            raise HTTPException(
-                status_code=404,
-                detail="The requested job does not exist",
-            )
-        upload = uploads.get_upload(session, job.upload_id)
-        if upload is None or upload.user_id != current_user.id:
-            raise HTTPException(
-                status_code=404,
-                detail="The requested job does not exist",
-            )
-        outputs = job_outputs.get_job_outputs(session, job_id)
-        return serialize_job(job, outputs)
-
-    @app.get("/jobs/{job_id}/outputs/{stem}")
-    def download_job_output(
-        job_id: UUID,
-        stem: str,
-        session: Session = Depends(get_db),
-        current_user: User = Depends(get_current_user),
-    ):
-        job = jobs.get_job(session, job_id)
-        if job is None:
-            raise HTTPException(
-                status_code=404,
-                detail="The job does not exist",
-            )
-
-        upload = uploads.get_upload(session, job.upload_id)
-        if upload is None or upload.user_id != current_user.id:
-            raise HTTPException(
-                status_code=404,
-                detail="The job does not exist",
-            )
-
-        if job.status != "completed":
-            raise HTTPException(
-                status_code=409,
-                detail="The job is not completed",
-            )
-
-        output = job_outputs.get_job_output(session, job_id, stem)
-        
-        if output is None:
-            raise HTTPException(
-                status_code=404,
-                detail="The requested stem does not exist",
-            )
-
-        output_path = Path(output.path)
-
-        if not output_path.is_file():
-            raise HTTPException(
-                        status_code=404,
-                        detail="The output file is missing",
-                    )
-            
-        return FileResponse(output_path)
-
-    @app.post(
-        "/register",
-        response_model=UserResponse,
-        status_code=201,
-    )
-    def register_endpoint(request: RegisterRequest, session: Session = Depends(get_db)):
-        normalized_email = str(request.email).strip().lower()
-        existing_user = users.get_user_by_email(session, normalized_email)
-        if existing_user is not None:
-            raise HTTPException(
-                status_code=409,
-                detail="Email is already registered",
-            )
-        password_hash = hash_password(request.password)
-        try: 
-            user = users.create_user(
-                session,
-                normalized_email,
-                password_hash,
-            )
-            session.commit()
-        except IntegrityError:
-            session.rollback()
-            raise HTTPException(
-                status_code=409,
-                detail="Email is already registered",
-            )
-        return UserResponse(
-            id=user.id,
-            email=user.email,
-        )
-    @app.post(
-        "/login",
-        response_model=TokenResponse,
-    )
-    def login_endpoint(request: LoginRequest, session: Session = Depends(get_db)):
-        normalized_email = str(request.email).strip().lower()
-        user = users.get_user_by_email(session, normalized_email)
-        if user is None:
-            raise HTTPException(
-                status_code=401,
-                detail="Invalid email or password",
-            )
-        if not verify_password(request.password, user.password_hash):
-            raise HTTPException(
-                status_code=401,
-                detail="Invalid email or password",
-            )
-        access_token = create_access_token(
-            user_id=user.id,
-            secret_key=app.state.jwt_secret_key,
-            expires_delta=access_token_expires_delta,
-        )
-
-        return TokenResponse(
-            access_token=access_token,
-            token_type="bearer",
-        )
-        
     return app
 
 
-
 app = create_app()
-

@@ -1,14 +1,16 @@
-from app.db_models import Upload, Job, JobOutput, User
+from uuid import UUID, uuid4
+
+import pytest
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
-from uuid import UUID, uuid4
-import pytest
 
+from app.db_models import Job, JobOutput, Upload, User
 from tests.factories import (
-    create_test_user,
-    create_test_upload,
     create_test_job,
+    create_test_upload,
+    create_test_user,
 )
+
 
 def test_upload_table_definition():
     table = Upload.__table__
@@ -26,6 +28,7 @@ def test_upload_table_definition():
     assert not table.columns["original_filename"].nullable
     assert not table.columns["stored_filename"].nullable
 
+
 def test_job_table_definition():
     table = Job.__table__
 
@@ -39,13 +42,13 @@ def test_job_table_definition():
 
     upload_id_column = table.columns["upload_id"]
     foreign_key_targets = {
-        foreign_key.target_fullname
-        for foreign_key in upload_id_column.foreign_keys
+        foreign_key.target_fullname for foreign_key in upload_id_column.foreign_keys
     }
     assert foreign_key_targets == {"uploads.id"}
 
     assert not table.columns["upload_id"].nullable
     assert not table.columns["status"].nullable
+
 
 def test_job_output_table_definition():
     table = JobOutput.__table__
@@ -61,8 +64,7 @@ def test_job_output_table_definition():
 
     job_id_column = table.columns["job_id"]
     foreign_key_targets = {
-        foreign_key.target_fullname
-        for foreign_key in job_id_column.foreign_keys
+        foreign_key.target_fullname for foreign_key in job_id_column.foreign_keys
     }
     assert foreign_key_targets == {"jobs.id"}
 
@@ -70,13 +72,15 @@ def test_job_output_table_definition():
     assert not table.columns["stem"].nullable
     assert not table.columns["path"].nullable
 
+
 def test_upload_can_be_persisted(test_session_factory):
     with test_session_factory() as session:
         user = create_test_user(session)
-        upload = Upload(user_id=user.id,
-                        original_filename="song.wav",
-                        stored_filename="some-uuid.wav",
-                        )
+        upload = Upload(
+            user_id=user.id,
+            original_filename="song.wav",
+            stored_filename="some-uuid.wav",
+        )
         session.add(upload)
         session.commit()
 
@@ -86,6 +90,7 @@ def test_upload_can_be_persisted(test_session_factory):
         assert isinstance(result.id, UUID)
         assert result.original_filename == "song.wav"
         assert result.stored_filename == "some-uuid.wav"
+
 
 def test_job_can_be_persisted(test_session_factory):
     with test_session_factory() as session:
@@ -105,18 +110,23 @@ def test_job_can_be_persisted(test_session_factory):
         assert result.upload_id == upload_id
         assert result.status == "pending"
 
+
 def test_job_rejects_nonexistent_upload(test_session_factory):
     with test_session_factory() as session:
-        job = Job(upload_id=uuid4(), status="pending",)
+        job = Job(
+            upload_id=uuid4(),
+            status="pending",
+        )
         session.add(job)
 
         with pytest.raises(IntegrityError):
             session.commit()
 
+
 def test_job_output_can_be_persisted(test_session_factory):
     with test_session_factory() as session:
         user = create_test_user(session)
-        upload = create_test_upload(session, user)  
+        upload = create_test_upload(session, user)
         job = create_test_job(session, upload)
         job_id = job.id
 
@@ -131,6 +141,7 @@ def test_job_output_can_be_persisted(test_session_factory):
         assert result.stem == "guitar"
         assert result.path == "/tmp/guitar.wav"
 
+
 def test_job_output_rejects_duplicate_stem_for_same_job(test_session_factory):
     with test_session_factory() as session:
         user = create_test_user(session)
@@ -138,17 +149,24 @@ def test_job_output_rejects_duplicate_stem_for_same_job(test_session_factory):
         job = create_test_job(session, upload)
         job_id = job.id
 
-        job_output_guitar = JobOutput(job_id=job_id, stem="guitar", path="/tmp/guitar.wav")
-        job_output_vocals = JobOutput(job_id=job_id, stem="vocals", path="/tmp/vocals.wav")
+        job_output_guitar = JobOutput(
+            job_id=job_id, stem="guitar", path="/tmp/guitar.wav"
+        )
+        job_output_vocals = JobOutput(
+            job_id=job_id, stem="vocals", path="/tmp/vocals.wav"
+        )
         session.add(job_output_guitar)
         session.add(job_output_vocals)
         session.commit()
-        
+
     with test_session_factory() as session:
-        job_output_guitar_dup = JobOutput(job_id=job_id, stem="guitar", path="/tmp/guitar_dup.wav")
+        job_output_guitar_dup = JobOutput(
+            job_id=job_id, stem="guitar", path="/tmp/guitar_dup.wav"
+        )
         session.add(job_output_guitar_dup)
         with pytest.raises(IntegrityError):
             session.commit()
+
 
 def test_user_table_definition():
     table = User.__table__
@@ -167,21 +185,26 @@ def test_user_table_definition():
 
     assert not table.columns["password_hash"].nullable
 
+
 def test_upload_has_user_foreign_key():
     table = Upload.__table__
 
     upload_id_column = table.columns["user_id"]
     assert not upload_id_column.nullable
-    
+
     foreign_key_targets = {
-        foreign_key.target_fullname
-        for foreign_key in upload_id_column.foreign_keys
+        foreign_key.target_fullname for foreign_key in upload_id_column.foreign_keys
     }
     assert foreign_key_targets == {"users.id"}
 
+
 def test_upload_rejects_nonexistent_user(test_session_factory):
     with test_session_factory() as session:
-        upload = Upload(id=uuid4(), original_filename="song.wav", stored_filename="some-uuid.wav",)
+        upload = Upload(
+            id=uuid4(),
+            original_filename="song.wav",
+            stored_filename="some-uuid.wav",
+        )
         session.add(upload)
         with pytest.raises(IntegrityError):
             session.commit()

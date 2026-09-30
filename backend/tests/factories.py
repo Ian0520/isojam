@@ -1,4 +1,5 @@
-from app.db_models import Upload, Job, User
+from app.db_models import Job, Upload, User
+
 
 def create_test_user(session, email="user@example.com"):
     user = User(
@@ -9,19 +10,22 @@ def create_test_user(session, email="user@example.com"):
     session.flush()
     return user
 
+
 def create_test_upload(
     session,
     user,
     original_filename="song.wav",
     stored_filename="some-uuid.wav",
 ):
-    upload = Upload(user_id=user.id,
-                    original_filename=original_filename,
-                    stored_filename=stored_filename,
-                    )
+    upload = Upload(
+        user_id=user.id,
+        original_filename=original_filename,
+        stored_filename=stored_filename,
+    )
     session.add(upload)
     session.flush()
     return upload
+
 
 def create_test_job(session, upload, status="pending"):
     job = Job(upload_id=upload.id, status=status)
