@@ -3,7 +3,11 @@ from datetime import timedelta
 
 from fastapi import FastAPI
 
-from app.config import ACCESS_TOKEN_EXPIRES_DELTA, get_jwt_secret_key
+from app.config import (
+    ACCESS_TOKEN_EXPIRES_DELTA,
+    get_jwt_secret_key,
+    get_max_upload_bytes,
+)
 from app.database import SessionLocal
 from app.model import create_model_session
 from app.routers.auth import router as auth_router
@@ -16,11 +20,20 @@ def create_app(
     db_session_factory=SessionLocal,
     jwt_secret_key: str | None = None,
     access_token_expires_delta: timedelta = ACCESS_TOKEN_EXPIRES_DELTA,
+    max_upload_bytes: int | None = None,
 ):
+    if max_upload_bytes is not None and (
+        type(max_upload_bytes) is not int or max_upload_bytes <= 0
+    ):
+        raise ValueError("max_upload_bytes must be a positive integer")
+
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         app.state.jwt_secret_key = (
             jwt_secret_key if jwt_secret_key is not None else get_jwt_secret_key()
+        )
+        app.state.max_upload_bytes = (
+            max_upload_bytes if max_upload_bytes is not None else get_max_upload_bytes()
         )
         session = model_session_factory()
         app.state.model_session = session

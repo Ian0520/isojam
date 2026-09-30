@@ -1,8 +1,14 @@
 from datetime import timedelta
 from uuid import UUID
 
+import pytest
+from fastapi.testclient import TestClient
+from sqlalchemy import func, select
+
 import app.repositories.uploads as uploads
 import app.storage as storage
+from app.db_models import Upload
+from app.main import create_app
 from app.security import create_access_token
 from tests.factories import create_test_user
 
@@ -161,3 +167,45 @@ def test_rejects_non_wav_filename(
     assert response.status_code == 415
     assert response.json()["detail"] == "Unsupported audio type"
     assert not upload_dir.exists()
+
+
+@pytest.mark.parametrize(
+    ("payload", "expected_status"),
+    [(b"123", 200), (b"1234", 200), (b"12345", 413)],
+)
+def test_upload_enforces_injected_byte_limit(
+    tmp_path,
+    monkeypatch,
+    test_session_factory,
+    jwt_secret_key,
+    fake_model_session,
+    auth_headers,
+    payload,
+    expected_status,
+):
+    upload_dir = tmp_path / "uploads"
+    monkeypatch.setattr(storage, "UPLOAD_DIR", upload_dir)
+    test_app = create_app(
+        model_session_factory=lambda: fake_model_session,
+        db_session_factory=test_session_factory,
+        jwt_secret_key=jwt_secret_key,
+        max_upload_bytes=4,
+    )
+    with TestClient(test_app) as client:
+        response = client.post(
+            "/uploads",
+            files={"audio_file": ("test.wav", payload, "audio/wav")},
+            headers=auth_headers,
+        )
+    assert response.status_code == expected_status
+    saved_files = list(upload_dir.glob("*"))
+    with test_session_factory() as session:
+        upload_count = session.scalar(select(func.count()).select_from(Upload))
+    if expected_status == 413:
+        assert response.json()["detail"] == "Upload exceeds the maximum allowed size"
+        assert saved_files == []
+        assert upload_count == 0
+    else:
+        assert len(saved_files) == 1
+        assert saved_files[0].read_bytes() == payload
+        assert upload_count == 1

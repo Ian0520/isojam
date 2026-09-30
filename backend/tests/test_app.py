@@ -104,3 +104,51 @@ def test_app_uses_injected_db_session_factory_for_requests(
         user = users.get_user_by_email(session, email)
         assert user is not None
         assert str(user.id) == response.json()["id"]
+
+
+def test_app_uses_injected_upload_limit(
+    fake_model_session, jwt_secret_key, monkeypatch
+):
+    monkeypatch.setenv("ISOJAM_MAX_UPLOAD_BYTES", "invalid")
+    test_app = create_app(
+        model_session_factory=lambda: fake_model_session,
+        jwt_secret_key=jwt_secret_key,
+        max_upload_bytes=1024,
+    )
+    with TestClient(test_app):
+        assert test_app.state.max_upload_bytes == 1024
+
+
+def test_app_reads_upload_limit_from_environment(
+    fake_model_session, jwt_secret_key, monkeypatch
+):
+    monkeypatch.setenv("ISOJAM_MAX_UPLOAD_BYTES", "2048")
+    test_app = create_app(
+        model_session_factory=lambda: fake_model_session,
+        jwt_secret_key=jwt_secret_key,
+    )
+    with TestClient(test_app):
+        assert test_app.state.max_upload_bytes == 2048
+
+
+def test_app_rejects_invalid_upload_limit_before_loading_model(
+    jwt_secret_key, monkeypatch
+):
+    monkeypatch.setenv("ISOJAM_MAX_UPLOAD_BYTES", "0")
+
+    def unexpected_model_factory():
+        pytest.fail("Model must not load when upload configuration is invalid")
+
+    test_app = create_app(
+        model_session_factory=unexpected_model_factory,
+        jwt_secret_key=jwt_secret_key,
+    )
+    with pytest.raises(RuntimeError, match="ISOJAM_MAX_UPLOAD_BYTES"):
+        with TestClient(test_app):
+            pass
+
+
+@pytest.mark.parametrize("max_upload_bytes", [0, -1, True, 1.5])
+def test_app_rejects_invalid_injected_upload_limit(max_upload_bytes):
+    with pytest.raises(ValueError, match="max_upload_bytes"):
+        create_app(max_upload_bytes=max_upload_bytes)

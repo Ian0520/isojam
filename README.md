@@ -101,6 +101,22 @@ Reuse the same secret across restarts. Changing it invalidates previously issued
 
 Startup fails if the environment variable is missing or blank.
 
+### Configure Upload Size
+
+Uploaded files are limited to 200 MiB by default. Set a different positive byte
+limit in the shell used to start the application:
+
+```bash
+export ISOJAM_MAX_UPLOAD_BYTES=104857600
+```
+
+This example sets a 100 MiB limit. Oversized files return `413` without saving
+upload metadata, and incomplete copies are removed. Invalid configuration fails
+startup before the model loads.
+
+This limits files saved by the application. Hosted deployments also need a
+request-body limit before multipart parsing, which can spool uploads to disk.
+
 ## Running
 
 From `backend`, with the virtual environment activated and the signing secret configured:
