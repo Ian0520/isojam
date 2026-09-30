@@ -1,13 +1,14 @@
-import app.repositories.users as users
-from app.security import decode_access_token
-from app.database import get_db
-
-from sqlalchemy.orm import Session
 from fastapi import Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jwt.exceptions import InvalidTokenError
+from sqlalchemy.orm import Session
+
+import app.repositories.users as users
+from app.database import get_db
+from app.security import decode_access_token
 
 bearer_scheme = HTTPBearer(auto_error=False)
+
 
 def get_current_user(
     request: Request,

@@ -198,7 +198,7 @@ Tests use temporary databases and storage, fake model sessions, and test signing
 From `backend`, install the test dependencies if needed:
 
 ```bash
-python -m pip install pytest httpx2
+python -m pip install -e ".[dev]"
 ```
 
 Run the full suite:

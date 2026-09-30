@@ -14,10 +14,11 @@ dependencies = [
     "bs-roformer-infer @ git+https://github.com/openmirlab/bs-roformer-infer.git@de35ada5817b878da0194ee2860253dda3a9c2b2",
 ]
 
-[dependency-groups]
+[project.optional-dependencies]
 dev = [
     "pytest",
     "httpx2",
+    "ruff",
 ]
 
 [build-system]
@@ -27,3 +28,9 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 include = ["app", "app.*"]
 exclude = ["migrations", "migrations.*", "tests", "tests.*"]
+
+[tool.ruff]
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I"]

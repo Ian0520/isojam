@@ -1,15 +1,17 @@
+from uuid import UUID
+
+import app.repositories.job_outputs as job_outputs
 import app.repositories.jobs as jobs
 import app.repositories.uploads as uploads
-import app.storage as storage
 import app.separation as separation
-import app.repositories.job_outputs as job_outputs
-from uuid import UUID
+import app.storage as storage
+
 
 def process_job(job_id: UUID, model_session, db_session_factory):
     with db_session_factory() as session:
         job = jobs.get_job(session, job_id)
         if job is None:
-            raise KeyError("job not found") 
+            raise KeyError("job not found")
         upload_id = job.upload_id
         upload = uploads.get_upload(session, upload_id)
         if upload is None:
@@ -60,4 +62,3 @@ def process_job(job_id: UUID, model_session, db_session_factory):
             )
             session.commit()
         raise
-    

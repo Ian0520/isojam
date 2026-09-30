@@ -1,30 +1,40 @@
-from app.repositories import jobs, uploads, users, job_outputs
-from app.storage import save_upload
-from app.processing import process_job
-from app.model import create_model_session
-from app.database import get_db, SessionLocal
-from app.schemas import RegisterRequest, UserResponse, LoginRequest, TokenResponse
-from app.security import hash_password, verify_password, create_access_token
-from app.config import get_jwt_secret_key
-from app.auth import get_current_user
-from app.db_models import User
-
-from fastapi import FastAPI, UploadFile, HTTPException, BackgroundTasks, Request, Depends
-from pathlib import Path
-from fastapi.responses import FileResponse
-from sqlalchemy.orm import Session
-from sqlalchemy.exc import IntegrityError
-from pydantic import BaseModel
 from contextlib import asynccontextmanager
-from uuid import UUID
 from datetime import timedelta
+from pathlib import Path
+from uuid import UUID
+
+from fastapi import (
+    BackgroundTasks,
+    Depends,
+    FastAPI,
+    HTTPException,
+    Request,
+    UploadFile,
+)
+from fastapi.responses import FileResponse
+from pydantic import BaseModel
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
+
+from app.auth import get_current_user
+from app.config import get_jwt_secret_key
+from app.database import SessionLocal, get_db
+from app.db_models import User
+from app.model import create_model_session
+from app.processing import process_job
+from app.repositories import job_outputs, jobs, uploads, users
+from app.schemas import LoginRequest, RegisterRequest, TokenResponse, UserResponse
+from app.security import create_access_token, hash_password, verify_password
+from app.storage import save_upload
 
 ALLOWED_AUDIO_TYPES = {
     "audio/wav",
 }
 
+
 class CreateJobRequest(BaseModel):
     upload_id: UUID
+
 
 def serialize_job(job, outputs):
     job_id = job.id
@@ -43,15 +53,14 @@ def serialize_job(job, outputs):
     return serialized_job
 
 
-
 def create_app(
-        model_session_factory=create_model_session, 
-        db_session_factory=SessionLocal,
-        jwt_secret_key: str | None = None,
-        access_token_expires_delta=timedelta(minutes=30),
+    model_session_factory=create_model_session,
+    db_session_factory=SessionLocal,
+    jwt_secret_key: str | None = None,
+    access_token_expires_delta=timedelta(minutes=30),
 ):
     @asynccontextmanager
-    async def lifespan(app: FastAPI):      
+    async def lifespan(app: FastAPI):
         app.state.jwt_secret_key = (
             jwt_secret_key if jwt_secret_key is not None else get_jwt_secret_key()
         )
@@ -71,7 +80,7 @@ def create_app(
 
     @app.post("/uploads")
     def upload_file(
-        audio_file: UploadFile, 
+        audio_file: UploadFile,
         session: Session = Depends(get_db),
         current_user: User = Depends(get_current_user),
     ):
@@ -88,7 +97,7 @@ def create_app(
         saved_path = save_upload(audio_file)
 
         upload_record = uploads.create_upload(
-            session=session, 
+            session=session,
             original_filename=audio_file.filename,
             stored_filename=saved_path.name,
             user_id=current_user.id,
@@ -104,23 +113,20 @@ def create_app(
 
     @app.post("/jobs")
     def create_job_endpoint(
-            upload_request: CreateJobRequest,
-            background_tasks: BackgroundTasks,
-            request: Request,
-            session: Session = Depends(get_db),
-            current_user: User = Depends(get_current_user),
+        upload_request: CreateJobRequest,
+        background_tasks: BackgroundTasks,
+        request: Request,
+        session: Session = Depends(get_db),
+        current_user: User = Depends(get_current_user),
     ):
         upload_id = upload_request.upload_id
         upload = uploads.get_upload(session, upload_id)
         if upload is None or current_user.id != upload.user_id:
-            raise HTTPException(
-                status_code=404,
-                detail="The upload does not exist"
-            )
+            raise HTTPException(status_code=404, detail="The upload does not exist")
         job = jobs.create_job(session, upload_id)
         job_id = job.id
         session.commit()
-        
+
         background_tasks.add_task(
             process_job,
             job_id,
@@ -135,7 +141,7 @@ def create_app(
         job_id: UUID,
         session: Session = Depends(get_db),
         current_user: User = Depends(get_current_user),
-        ):
+    ):
         job = jobs.get_job(session, job_id)
         if job is None:
             raise HTTPException(
@@ -179,7 +185,7 @@ def create_app(
             )
 
         output = job_outputs.get_job_output(session, job_id, stem)
-        
+
         if output is None:
             raise HTTPException(
                 status_code=404,
@@ -190,10 +196,10 @@ def create_app(
 
         if not output_path.is_file():
             raise HTTPException(
-                        status_code=404,
-                        detail="The output file is missing",
-                    )
-            
+                status_code=404,
+                detail="The output file is missing",
+            )
+
         return FileResponse(output_path)
 
     @app.post(
@@ -210,7 +216,7 @@ def create_app(
                 detail="Email is already registered",
             )
         password_hash = hash_password(request.password)
-        try: 
+        try:
             user = users.create_user(
                 session,
                 normalized_email,
@@ -227,6 +233,7 @@ def create_app(
             id=user.id,
             email=user.email,
         )
+
     @app.post(
         "/login",
         response_model=TokenResponse,
@@ -254,10 +261,8 @@ def create_app(
             access_token=access_token,
             token_type="bearer",
         )
-        
+
     return app
 
 
-
 app = create_app()
-

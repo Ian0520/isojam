@@ -1,8 +1,10 @@
-import app.separation as separation
-from types import SimpleNamespace
 from pathlib import Path
-from tempfile import TemporaryDirectory
+from types import SimpleNamespace
+
 import pytest
+
+import app.separation as separation
+
 
 class FakeSession:
     def infer(self, input_folder, *, store_dir):
@@ -12,23 +14,28 @@ class FakeSession:
         self.input_filenames = [path.name for path in files]
         self.input_is_symlink = files[0].is_symlink()
 
-        fake_guitar_output = SimpleNamespace(output_id="guitar",
-                                             output_path=store_dir / "test_guitar.wav")
+        fake_guitar_output = SimpleNamespace(
+            output_id="guitar", output_path=store_dir / "test_guitar.wav"
+        )
         manifest = SimpleNamespace(outputs=[fake_guitar_output])
 
         return manifest
 
+
 def test_collect_output_paths():
-    fake_bass_output = SimpleNamespace(output_id="bass",
-                                       output_path="data/output/test_bass.wav")
-    fake_guitar_output = SimpleNamespace(output_id="guitar",
-                                         output_path="data/output/test_guitar.wav")
+    fake_bass_output = SimpleNamespace(
+        output_id="bass", output_path="data/output/test_bass.wav"
+    )
+    fake_guitar_output = SimpleNamespace(
+        output_id="guitar", output_path="data/output/test_guitar.wav"
+    )
     fake_manifest = SimpleNamespace(outputs=[fake_bass_output, fake_guitar_output])
 
     paths = separation.collect_output_paths(fake_manifest)
 
     assert paths["bass"] == Path("data/output/test_bass.wav")
     assert paths["guitar"] == Path("data/output/test_guitar.wav")
+
 
 def test_separate_audio(tmp_path):
     input_path = tmp_path / "test.wav"
@@ -43,6 +50,7 @@ def test_separate_audio(tmp_path):
     assert session.store_dir == output_dir
     assert returned["guitar"] == output_dir / "test_guitar.wav"
     assert session.input_is_symlink
+
 
 def test_separate_audio_rejects_non_wav(tmp_path):
     input_path = tmp_path / "test.mp3"
