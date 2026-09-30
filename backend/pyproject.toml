@@ -11,6 +11,8 @@ dependencies = [
     "pwdlib[argon2]",
     "email-validator",
     "pyjwt",
+    "numpy>=1.23",
+    "soundfile>=0.12",
     "bs-roformer-infer @ git+https://github.com/openmirlab/bs-roformer-infer.git@de35ada5817b878da0194ee2860253dda3a9c2b2",
 ]
 

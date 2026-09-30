@@ -3,6 +3,7 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile
 from sqlalchemy.orm import Session
 
+from app.audio import AudioTooLongError, InvalidAudioError, validate_wav
 from app.auth import get_current_user
 from app.database import get_db
 from app.db_models import User
@@ -43,6 +44,21 @@ def upload_file(
             status_code=413,
             detail="Upload exceeds the maximum allowed size",
         ) from error
+
+    try:
+        validate_wav(
+            saved_path,
+            max_duration_seconds=request.app.state.max_audio_duration_seconds,
+        )
+    except (InvalidAudioError, AudioTooLongError) as error:
+        saved_path.unlink(missing_ok=True)
+        raise HTTPException(
+            status_code=413 if isinstance(error, AudioTooLongError) else 422,
+            detail=str(error),
+        ) from error
+    except BaseException:
+        saved_path.unlink(missing_ok=True)
+        raise
 
     upload_record = uploads.create_upload(
         session=session,

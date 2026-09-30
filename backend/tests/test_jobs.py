@@ -15,7 +15,7 @@ from tests.factories import create_test_job, create_test_upload, create_test_use
 
 
 @pytest.fixture
-def uploaded_file_id(client, tmp_path, monkeypatch, auth_headers):
+def uploaded_file_id(client, tmp_path, monkeypatch, auth_headers, wav_bytes):
     monkeypatch.setattr(storage, "UPLOAD_DIR", tmp_path)
     output_root = tmp_path / "outputs"
     monkeypatch.setattr(storage, "OUTPUT_DIR", output_root)
@@ -25,7 +25,7 @@ def uploaded_file_id(client, tmp_path, monkeypatch, auth_headers):
         files={
             "audio_file": (
                 "test.wav",
-                b"fake audio data",
+                wav_bytes,
                 "audio/wav",
             )
         },

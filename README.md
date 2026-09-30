@@ -101,18 +101,25 @@ Reuse the same secret across restarts. Changing it invalidates previously issued
 
 Startup fails if the environment variable is missing or blank.
 
-### Configure Upload Size
+### Configure Upload Limits
 
 Uploaded files are limited to 200 MiB by default. Set a different positive byte
 limit in the shell used to start the application:
 
 ```bash
 export ISOJAM_MAX_UPLOAD_BYTES=104857600
+export ISOJAM_MAX_AUDIO_DURATION_SECONDS=300
 ```
 
-This example sets a 100 MiB limit. Oversized files return `413` without saving
-upload metadata, and incomplete copies are removed. Invalid configuration fails
-startup before the model loads.
+This example sets a 100 MiB file limit and a 5-minute duration limit. The default
+duration limit is 10 minutes. Both settings must be positive integers; invalid
+configuration fails startup before the model loads.
+
+Uploads must contain readable, nonempty mono or stereo WAV audio at 8-96 kHz.
+PCM and floating-point WAV audio are supported, including WAVEX. All samples are
+checked for non-finite values through bounded block decoding. Invalid audio
+returns `422`; files exceeding the byte or duration limit return `413`. Rejected
+files are removed without saving upload metadata.
 
 This limits files saved by the application. Hosted deployments also need a
 request-body limit before multipart parsing, which can spool uploads to disk.

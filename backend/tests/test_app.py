@@ -152,3 +152,51 @@ def test_app_rejects_invalid_upload_limit_before_loading_model(
 def test_app_rejects_invalid_injected_upload_limit(max_upload_bytes):
     with pytest.raises(ValueError, match="max_upload_bytes"):
         create_app(max_upload_bytes=max_upload_bytes)
+
+
+def test_app_uses_injected_audio_duration_limit(
+    fake_model_session, jwt_secret_key, monkeypatch
+):
+    monkeypatch.setenv("ISOJAM_MAX_AUDIO_DURATION_SECONDS", "invalid")
+    test_app = create_app(
+        model_session_factory=lambda: fake_model_session,
+        jwt_secret_key=jwt_secret_key,
+        max_audio_duration_seconds=30,
+    )
+    with TestClient(test_app):
+        assert test_app.state.max_audio_duration_seconds == 30
+
+
+def test_app_reads_audio_duration_limit_from_environment(
+    fake_model_session, jwt_secret_key, monkeypatch
+):
+    monkeypatch.setenv("ISOJAM_MAX_AUDIO_DURATION_SECONDS", "120")
+    test_app = create_app(
+        model_session_factory=lambda: fake_model_session,
+        jwt_secret_key=jwt_secret_key,
+    )
+    with TestClient(test_app):
+        assert test_app.state.max_audio_duration_seconds == 120
+
+
+def test_app_rejects_invalid_audio_duration_before_loading_model(
+    jwt_secret_key, monkeypatch
+):
+    monkeypatch.setenv("ISOJAM_MAX_AUDIO_DURATION_SECONDS", "0")
+
+    def unexpected_model_factory():
+        pytest.fail("Model must not load when audio duration configuration is invalid")
+
+    test_app = create_app(
+        model_session_factory=unexpected_model_factory,
+        jwt_secret_key=jwt_secret_key,
+    )
+    with pytest.raises(RuntimeError, match="ISOJAM_MAX_AUDIO_DURATION_SECONDS"):
+        with TestClient(test_app):
+            pass
+
+
+@pytest.mark.parametrize("max_audio_duration_seconds", [0, -1, True, 1.5])
+def test_app_rejects_invalid_injected_audio_duration_limit(max_audio_duration_seconds):
+    with pytest.raises(ValueError, match="max_audio_duration_seconds"):
+        create_app(max_audio_duration_seconds=max_audio_duration_seconds)

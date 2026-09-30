@@ -10,7 +10,7 @@ from app.database import enable_sqlite_foreign_keys
 from app.db_models import Base
 from app.main import create_app
 from app.security import create_access_token
-from tests.factories import create_test_user
+from tests.factories import create_test_user, make_wav_bytes
 
 
 class FakeModelSession:
@@ -90,3 +90,8 @@ def auth_headers(test_session_factory, jwt_secret_key):
         expires_delta=timedelta(minutes=5),
     )
     return {"Authorization": f"Bearer {access_token}"}
+
+
+@pytest.fixture
+def wav_bytes():
+    return make_wav_bytes()
