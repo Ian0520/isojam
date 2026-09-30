@@ -17,7 +17,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.auth import get_current_user
-from app.config import get_jwt_secret_key
+from app.config import ACCESS_TOKEN_EXPIRES_DELTA, get_jwt_secret_key
 from app.database import SessionLocal, get_db
 from app.db_models import User
 from app.model import create_model_session
@@ -57,7 +57,7 @@ def create_app(
     model_session_factory=create_model_session,
     db_session_factory=SessionLocal,
     jwt_secret_key: str | None = None,
-    access_token_expires_delta=timedelta(minutes=30),
+    access_token_expires_delta: timedelta = ACCESS_TOKEN_EXPIRES_DELTA,
 ):
     @asynccontextmanager
     async def lifespan(app: FastAPI):
