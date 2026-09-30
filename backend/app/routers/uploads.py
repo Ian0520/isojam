@@ -1,0 +1,50 @@
+from pathlib import Path
+
+from fastapi import APIRouter, Depends, HTTPException, UploadFile
+from sqlalchemy.orm import Session
+
+from app.auth import get_current_user
+from app.database import get_db
+from app.db_models import User
+from app.repositories import uploads
+from app.storage import save_upload
+
+router = APIRouter()
+
+ALLOWED_AUDIO_TYPES = {
+    "audio/wav",
+}
+
+
+@router.post("/uploads")
+def upload_file(
+    audio_file: UploadFile,
+    session: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    # Check if type is allowed
+    if (
+        audio_file.content_type not in ALLOWED_AUDIO_TYPES
+        or Path(audio_file.filename or "").suffix.lower() != ".wav"
+    ):
+        raise HTTPException(
+            status_code=415,
+            detail="Unsupported audio type",
+        )
+
+    saved_path = save_upload(audio_file)
+
+    upload_record = uploads.create_upload(
+        session=session,
+        original_filename=audio_file.filename,
+        stored_filename=saved_path.name,
+        user_id=current_user.id,
+    )
+    upload_id = upload_record.id
+    session.commit()
+
+    return {
+        "id": upload_id,
+        "filename": audio_file.filename,
+        "content_type": audio_file.content_type,
+    }

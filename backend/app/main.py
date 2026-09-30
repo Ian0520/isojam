@@ -9,7 +9,6 @@ from fastapi import (
     FastAPI,
     HTTPException,
     Request,
-    UploadFile,
 )
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
@@ -22,12 +21,8 @@ from app.model import create_model_session
 from app.processing import process_job
 from app.repositories import job_outputs, jobs, uploads
 from app.routers.auth import router as auth_router
+from app.routers.uploads import router as uploads_router
 from app.schemas import CreateJobRequest
-from app.storage import save_upload
-
-ALLOWED_AUDIO_TYPES = {
-    "audio/wav",
-}
 
 
 def serialize_job(job, outputs):
@@ -74,38 +69,7 @@ def create_app(
     def health():
         return {"status": "ok"}
 
-    @app.post("/uploads")
-    def upload_file(
-        audio_file: UploadFile,
-        session: Session = Depends(get_db),
-        current_user: User = Depends(get_current_user),
-    ):
-        # Check if type is allowed
-        if (
-            audio_file.content_type not in ALLOWED_AUDIO_TYPES
-            or Path(audio_file.filename or "").suffix.lower() != ".wav"
-        ):
-            raise HTTPException(
-                status_code=415,
-                detail="Unsupported audio type",
-            )
-
-        saved_path = save_upload(audio_file)
-
-        upload_record = uploads.create_upload(
-            session=session,
-            original_filename=audio_file.filename,
-            stored_filename=saved_path.name,
-            user_id=current_user.id,
-        )
-        upload_id = upload_record.id
-        session.commit()
-
-        return {
-            "id": upload_id,
-            "filename": audio_file.filename,
-            "content_type": audio_file.content_type,
-        }
+    app.include_router(uploads_router)
 
     @app.post("/jobs")
     def create_job_endpoint(
