@@ -60,14 +60,21 @@ def upload_file(
         saved_path.unlink(missing_ok=True)
         raise
 
-    upload_record = uploads.create_upload(
-        session=session,
-        original_filename=audio_file.filename,
-        stored_filename=saved_path.name,
-        user_id=current_user.id,
-    )
-    upload_id = upload_record.id
-    session.commit()
+    try:
+        upload_record = uploads.create_upload(
+            session=session,
+            original_filename=audio_file.filename,
+            stored_filename=saved_path.name,
+            user_id=current_user.id,
+        )
+        upload_id = upload_record.id
+        session.commit()
+    except BaseException:
+        try:
+            session.rollback()
+        finally:
+            saved_path.unlink(missing_ok=True)
+        raise
 
     return UploadResponse(
         id=upload_id,

@@ -4,6 +4,7 @@ from uuid import UUID
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select
+from sqlalchemy.exc import SQLAlchemyError
 
 import app.repositories.uploads as uploads
 import app.storage as storage
@@ -288,5 +289,50 @@ def test_upload_removes_file_when_validation_fails_unexpectedly(
             headers=auth_headers,
         )
     assert list(upload_dir.glob("*")) == []
+    with test_session_factory() as session:
+        assert session.scalar(select(func.count()).select_from(Upload)) == 0
+
+
+@pytest.mark.parametrize("failure_step", ["repository", "commit"])
+def test_upload_removes_file_when_metadata_persistence_fails(
+    client,
+    tmp_path,
+    monkeypatch,
+    auth_headers,
+    test_session_factory,
+    wav_bytes,
+    failure_step,
+):
+    upload_dir = tmp_path / "uploads"
+    upload_dir.mkdir()
+    existing_file = upload_dir / "existing.wav"
+    existing_file.write_bytes(wav_bytes)
+    monkeypatch.setattr(storage, "UPLOAD_DIR", upload_dir)
+    persistence_error = SQLAlchemyError("Simulated upload persistence failure")
+
+    if failure_step == "repository":
+        original_create_upload = uploads.create_upload
+
+        def failing_create_upload(*args, **kwargs):
+            original_create_upload(*args, **kwargs)
+            raise persistence_error
+
+        monkeypatch.setattr(uploads, "create_upload", failing_create_upload)
+    else:
+
+        def failing_commit(session):
+            raise persistence_error
+
+        monkeypatch.setattr(test_session_factory.class_, "commit", failing_commit)
+
+    with pytest.raises(SQLAlchemyError) as captured_error:
+        client.post(
+            "/uploads",
+            files={"audio_file": ("test.wav", wav_bytes, "audio/wav")},
+            headers=auth_headers,
+        )
+    assert captured_error.value is persistence_error
+    assert list(upload_dir.iterdir()) == [existing_file]
+    assert existing_file.read_bytes() == wav_bytes
     with test_session_factory() as session:
         assert session.scalar(select(func.count()).select_from(Upload)) == 0
