@@ -1,6 +1,10 @@
+from pathlib import Path
+
 import pytest
 
+import app.config as config
 from app.config import (
+    get_audio_storage_dir,
     get_jwt_secret_key,
     get_max_audio_duration_seconds,
     get_max_unfinished_jobs_per_user,
@@ -76,3 +80,38 @@ def test_get_max_unfinished_jobs_per_user_rejects_invalid_values(monkeypatch, va
     monkeypatch.setenv("ISOJAM_MAX_UNFINISHED_JOBS_PER_USER", value)
     with pytest.raises(RuntimeError, match="ISOJAM_MAX_UNFINISHED_JOBS_PER_USER"):
         get_max_unfinished_jobs_per_user()
+
+
+def test_get_audio_storage_dir_defaults_to_project_data_independent_of_working_directory(
+    tmp_path, monkeypatch
+):
+    monkeypatch.delenv("ISOJAM_AUDIO_STORAGE_DIR", raising=False)
+    monkeypatch.chdir(tmp_path)
+    assert (
+        get_audio_storage_dir() == Path(config.__file__).resolve().parents[2] / "data"
+    )
+
+
+def test_get_audio_storage_dir_reads_absolute_path_without_creating_it(
+    tmp_path, monkeypatch
+):
+    audio_dir = tmp_path / "audio storage"
+    monkeypatch.setenv("ISOJAM_AUDIO_STORAGE_DIR", str(audio_dir))
+    assert get_audio_storage_dir() == audio_dir
+    assert not audio_dir.exists()
+
+
+@pytest.mark.parametrize("value", ["", " ", "data", "../data", "~/data"])
+def test_get_audio_storage_dir_rejects_blank_or_relative_paths(monkeypatch, value):
+    monkeypatch.setenv("ISOJAM_AUDIO_STORAGE_DIR", value)
+    with pytest.raises(RuntimeError, match="ISOJAM_AUDIO_STORAGE_DIR"):
+        get_audio_storage_dir()
+
+
+def test_get_audio_storage_dir_rejects_existing_file(tmp_path, monkeypatch):
+    existing_file = tmp_path / "audio"
+    existing_file.write_bytes(b"existing file")
+    monkeypatch.setenv("ISOJAM_AUDIO_STORAGE_DIR", str(existing_file))
+    with pytest.raises(RuntimeError, match="ISOJAM_AUDIO_STORAGE_DIR.*directory"):
+        get_audio_storage_dir()
+    assert existing_file.read_bytes() == b"existing file"

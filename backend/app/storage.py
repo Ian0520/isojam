@@ -3,9 +3,11 @@ from uuid import uuid4
 
 from fastapi import UploadFile
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-UPLOAD_DIR = PROJECT_ROOT / "data" / "uploads"
-OUTPUT_DIR = PROJECT_ROOT / "data" / "outputs"
+from app.config import get_audio_storage_dir
+
+AUDIO_STORAGE_DIR = get_audio_storage_dir()
+UPLOAD_DIR = AUDIO_STORAGE_DIR / "uploads"
+OUTPUT_DIR = AUDIO_STORAGE_DIR / "outputs"
 
 
 class UploadTooLargeError(ValueError):

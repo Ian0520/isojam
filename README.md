@@ -83,6 +83,27 @@ Metadata is stored in the project-level `data/isojam.db`. Uploaded and generated
 
 The ownership migration assumes there are no existing uploads without owners. Migrating an older database containing such uploads requires a separate data-migration plan.
 
+### Configure Audio Storage
+
+By default, uploaded and generated audio uses the project-level `data/uploads`
+and `data/outputs` directories. To use a persistent disk outside the checkout, set
+an absolute directory path before starting the server:
+
+```bash
+export ISOJAM_AUDIO_STORAGE_DIR=/var/lib/isojam/audio
+```
+
+Uploads then use `/var/lib/isojam/audio/uploads`; generated outputs use
+`/var/lib/isojam/audio/outputs/<job-id>`. Directories are created when files are
+saved. Blank/relative paths and paths that already refer to a file fail startup.
+The setting is read when the storage module loads; restart the server to apply a
+change. It does not depend on the server's working directory.
+
+This setting controls audio storage. SQLite metadata uses `data/isojam.db` and
+needs its own persistent storage configuration before deployment. Relocating an
+existing installation requires a file and metadata migration: changing this
+setting does not move files, and existing output records contain absolute paths.
+
 ### Configure Authentication
 
 Generate a random signing secret once:
