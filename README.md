@@ -121,8 +121,15 @@ checked for non-finite values through bounded block decoding. Invalid audio
 returns `422`; files exceeding the byte or duration limit return `413`. Rejected
 files are removed without saving upload metadata.
 
-This limits files saved by the application. Hosted deployments also need a
-request-body limit before multipart parsing, which can spool uploads to disk.
+Request-size middleware also limits `POST /uploads` to the configured file
+limit plus 64 KiB for multipart headers and form fields. Other API requests have
+a 16 KiB body limit. Oversized requests return `413`. The middleware checks both
+`Content-Length` and actual received bytes before passing body chunks to the
+request parser, so missing or understated lengths cannot bypass the limit.
+Multipart temporary files are closed when parsing is interrupted.
+
+The endpoint still enforces the audio file's own byte limit and validates its
+contents and duration; multipart overhead does not increase the allowed file size.
 
 ## Running
 

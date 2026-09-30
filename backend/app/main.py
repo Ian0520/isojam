@@ -10,6 +10,7 @@ from app.config import (
     get_max_upload_bytes,
 )
 from app.database import SessionLocal
+from app.middleware import RequestSizeLimitMiddleware
 from app.model import create_model_session
 from app.routers.auth import router as auth_router
 from app.routers.jobs import router as jobs_router
@@ -55,6 +56,7 @@ def create_app(
             session.close()
 
     app = FastAPI(lifespan=lifespan)
+    app.add_middleware(RequestSizeLimitMiddleware)
     app.state.db_session_factory = db_session_factory
     app.state.access_token_expires_delta = access_token_expires_delta
 
