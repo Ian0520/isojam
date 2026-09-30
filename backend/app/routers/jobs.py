@@ -7,12 +7,27 @@ from sqlalchemy.orm import Session
 
 from app.auth import get_current_user
 from app.database import get_db
-from app.db_models import User
+from app.db_models import Job, User
 from app.processing import process_job
 from app.repositories import job_outputs, jobs, uploads
 from app.schemas import CreateJobRequest
 
 router = APIRouter()
+
+
+def _get_owned_job(
+    session: Session,
+    job_id: UUID,
+    user_id: UUID,
+    *,
+    not_found_detail: str,
+) -> Job:
+    job = jobs.get_job(session, job_id)
+    if job is not None:
+        upload = uploads.get_upload(session, job.upload_id)
+        if upload is not None and upload.user_id == user_id:
+            return job
+    raise HTTPException(status_code=404, detail=not_found_detail)
 
 
 def serialize_job(job, outputs):
@@ -64,18 +79,12 @@ def get_job_endpoint(
     session: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    job = jobs.get_job(session, job_id)
-    if job is None:
-        raise HTTPException(
-            status_code=404,
-            detail="The requested job does not exist",
-        )
-    upload = uploads.get_upload(session, job.upload_id)
-    if upload is None or upload.user_id != current_user.id:
-        raise HTTPException(
-            status_code=404,
-            detail="The requested job does not exist",
-        )
+    job = _get_owned_job(
+        session,
+        job_id,
+        current_user.id,
+        not_found_detail="The requested job does not exist",
+    )
     outputs = job_outputs.get_job_outputs(session, job_id)
     return serialize_job(job, outputs)
 
@@ -87,19 +96,12 @@ def download_job_output(
     session: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    job = jobs.get_job(session, job_id)
-    if job is None:
-        raise HTTPException(
-            status_code=404,
-            detail="The job does not exist",
-        )
-
-    upload = uploads.get_upload(session, job.upload_id)
-    if upload is None or upload.user_id != current_user.id:
-        raise HTTPException(
-            status_code=404,
-            detail="The job does not exist",
-        )
+    job = _get_owned_job(
+        session,
+        job_id,
+        current_user.id,
+        not_found_detail="The job does not exist",
+    )
 
     if job.status != "completed":
         raise HTTPException(
