@@ -197,6 +197,21 @@ Send `POST /jobs` with the upload ID:
 
 The upload must belong to the authenticated user. The response contains a job ID.
 
+Each user can have at most two unfinished jobs by default, counting both `pending`
+and `processing` jobs across all their uploads. At the limit, submission returns
+`429` without creating or dispatching a job. Completed and failed jobs do not count.
+Set a different positive limit before starting the application:
+
+```bash
+export ISOJAM_MAX_UNFINISHED_JOBS_PER_USER=3
+```
+
+Invalid configuration fails startup before the model loads. Job admission combines
+the count and conditional insert in one statement and relies on SQLite's serialized
+writes to protect simultaneous submissions. A different database backend requires
+reviewing its locking/isolation behavior. This allowance bounds unfinished work;
+it is not a daily usage limit or a global GPU concurrency limit.
+
 ### 4. Check Processing Status
 
 Poll `GET /jobs/{job_id}`.

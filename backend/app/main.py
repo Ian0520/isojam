@@ -7,6 +7,7 @@ from app.config import (
     ACCESS_TOKEN_EXPIRES_DELTA,
     get_jwt_secret_key,
     get_max_audio_duration_seconds,
+    get_max_unfinished_jobs_per_user,
     get_max_upload_bytes,
 )
 from app.database import SessionLocal
@@ -24,6 +25,7 @@ def create_app(
     access_token_expires_delta: timedelta = ACCESS_TOKEN_EXPIRES_DELTA,
     max_upload_bytes: int | None = None,
     max_audio_duration_seconds: int | None = None,
+    max_unfinished_jobs_per_user: int | None = None,
 ):
     if max_upload_bytes is not None and (
         type(max_upload_bytes) is not int or max_upload_bytes <= 0
@@ -33,6 +35,12 @@ def create_app(
         type(max_audio_duration_seconds) is not int or max_audio_duration_seconds <= 0
     ):
         raise ValueError("max_audio_duration_seconds must be a positive integer")
+
+    if max_unfinished_jobs_per_user is not None and (
+        type(max_unfinished_jobs_per_user) is not int
+        or max_unfinished_jobs_per_user <= 0
+    ):
+        raise ValueError("max_unfinished_jobs_per_user must be a positive integer")
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -46,6 +54,11 @@ def create_app(
             max_audio_duration_seconds
             if max_audio_duration_seconds is not None
             else get_max_audio_duration_seconds()
+        )
+        app.state.max_unfinished_jobs_per_user = (
+            max_unfinished_jobs_per_user
+            if max_unfinished_jobs_per_user is not None
+            else get_max_unfinished_jobs_per_user()
         )
         session = model_session_factory()
         app.state.model_session = session

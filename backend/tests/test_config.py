@@ -3,6 +3,7 @@ import pytest
 from app.config import (
     get_jwt_secret_key,
     get_max_audio_duration_seconds,
+    get_max_unfinished_jobs_per_user,
     get_max_upload_bytes,
 )
 
@@ -58,3 +59,20 @@ def test_get_max_audio_duration_seconds_rejects_invalid_values(monkeypatch, valu
     monkeypatch.setenv("ISOJAM_MAX_AUDIO_DURATION_SECONDS", value)
     with pytest.raises(RuntimeError, match="ISOJAM_MAX_AUDIO_DURATION_SECONDS"):
         get_max_audio_duration_seconds()
+
+
+def test_get_max_unfinished_jobs_per_user_uses_default(monkeypatch):
+    monkeypatch.delenv("ISOJAM_MAX_UNFINISHED_JOBS_PER_USER", raising=False)
+    assert get_max_unfinished_jobs_per_user() == 2
+
+
+def test_get_max_unfinished_jobs_per_user_reads_environment(monkeypatch):
+    monkeypatch.setenv("ISOJAM_MAX_UNFINISHED_JOBS_PER_USER", "3")
+    assert get_max_unfinished_jobs_per_user() == 3
+
+
+@pytest.mark.parametrize("value", ["0", "-1", "", "abc", "1.5"])
+def test_get_max_unfinished_jobs_per_user_rejects_invalid_values(monkeypatch, value):
+    monkeypatch.setenv("ISOJAM_MAX_UNFINISHED_JOBS_PER_USER", value)
+    with pytest.raises(RuntimeError, match="ISOJAM_MAX_UNFINISHED_JOBS_PER_USER"):
+        get_max_unfinished_jobs_per_user()

@@ -4,6 +4,7 @@ from datetime import timedelta
 ACCESS_TOKEN_EXPIRES_DELTA = timedelta(minutes=30)
 DEFAULT_MAX_UPLOAD_BYTES = 200 * 1024 * 1024
 DEFAULT_MAX_AUDIO_DURATION_SECONDS = 10 * 60
+DEFAULT_MAX_UNFINISHED_JOBS_PER_USER = 2
 
 
 def get_jwt_secret_key() -> str:
@@ -31,4 +32,10 @@ def get_max_upload_bytes() -> int:
 def get_max_audio_duration_seconds() -> int:
     return _get_positive_int(
         "ISOJAM_MAX_AUDIO_DURATION_SECONDS", DEFAULT_MAX_AUDIO_DURATION_SECONDS
+    )
+
+
+def get_max_unfinished_jobs_per_user() -> int:
+    return _get_positive_int(
+        "ISOJAM_MAX_UNFINISHED_JOBS_PER_USER", DEFAULT_MAX_UNFINISHED_JOBS_PER_USER
     )
