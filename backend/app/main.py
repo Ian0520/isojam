@@ -12,7 +12,6 @@ from fastapi import (
     UploadFile,
 )
 from fastapi.responses import FileResponse
-from pydantic import BaseModel
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -23,17 +22,19 @@ from app.db_models import User
 from app.model import create_model_session
 from app.processing import process_job
 from app.repositories import job_outputs, jobs, uploads, users
-from app.schemas import LoginRequest, RegisterRequest, TokenResponse, UserResponse
+from app.schemas import (
+    CreateJobRequest,
+    LoginRequest,
+    RegisterRequest,
+    TokenResponse,
+    UserResponse,
+)
 from app.security import create_access_token, hash_password, verify_password
 from app.storage import save_upload
 
 ALLOWED_AUDIO_TYPES = {
     "audio/wav",
 }
-
-
-class CreateJobRequest(BaseModel):
-    upload_id: UUID
 
 
 def serialize_job(job, outputs):
