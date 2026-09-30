@@ -1,6 +1,7 @@
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
+import jwt
 from fastapi import Depends
 from fastapi.testclient import TestClient
 from sqlalchemy import select
@@ -397,3 +398,45 @@ def test_register_rejects_empty_password(client, test_session_factory):
         statement = select(User).where(User.email == email)
         user = session.scalars(statement).one_or_none()
         assert user is None
+
+
+def test_login_uses_injected_token_lifetime(
+    fake_model_session,
+    test_session_factory,
+    jwt_secret_key,
+):
+    expires_delta = timedelta(minutes=7)
+
+    def fake_factory():
+        return fake_model_session
+
+    test_app = create_app(
+        model_session_factory=fake_factory,
+        db_session_factory=test_session_factory,
+        jwt_secret_key=jwt_secret_key,
+        access_token_expires_delta=expires_delta,
+    )
+
+    with TestClient(test_app) as client:
+        credentials = {
+            "email": "user@example.com",
+            "password": "correct-horse-battery-staple",
+        }
+        register_response = client.post("/register", json=credentials)
+        assert register_response.status_code == 201
+
+        before_login = datetime.now(timezone.utc)
+        response = client.post("/login", json=credentials)
+        after_login = datetime.now(timezone.utc)
+        assert response.status_code == 200
+
+    payload = jwt.decode(
+        response.json()["access_token"],
+        key=jwt_secret_key,
+        algorithms=["HS256"],
+    )
+    assert (
+        int((before_login + expires_delta).timestamp())
+        <= payload["exp"]
+        <= int((after_login + expires_delta).timestamp())
+    )

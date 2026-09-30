@@ -12,7 +12,6 @@ from fastapi import (
     UploadFile,
 )
 from fastapi.responses import FileResponse
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.auth import get_current_user
@@ -21,15 +20,9 @@ from app.database import SessionLocal, get_db
 from app.db_models import User
 from app.model import create_model_session
 from app.processing import process_job
-from app.repositories import job_outputs, jobs, uploads, users
-from app.schemas import (
-    CreateJobRequest,
-    LoginRequest,
-    RegisterRequest,
-    TokenResponse,
-    UserResponse,
-)
-from app.security import create_access_token, hash_password, verify_password
+from app.repositories import job_outputs, jobs, uploads
+from app.routers.auth import router as auth_router
+from app.schemas import CreateJobRequest
 from app.storage import save_upload
 
 ALLOWED_AUDIO_TYPES = {
@@ -75,6 +68,7 @@ def create_app(
 
     app = FastAPI(lifespan=lifespan)
     app.state.db_session_factory = db_session_factory
+    app.state.access_token_expires_delta = access_token_expires_delta
 
     @app.get("/health")
     def health():
@@ -204,65 +198,7 @@ def create_app(
 
         return FileResponse(output_path)
 
-    @app.post(
-        "/register",
-        response_model=UserResponse,
-        status_code=201,
-    )
-    def register_endpoint(request: RegisterRequest, session: Session = Depends(get_db)):
-        normalized_email = str(request.email).strip().lower()
-        existing_user = users.get_user_by_email(session, normalized_email)
-        if existing_user is not None:
-            raise HTTPException(
-                status_code=409,
-                detail="Email is already registered",
-            )
-        password_hash = hash_password(request.password)
-        try:
-            user = users.create_user(
-                session,
-                normalized_email,
-                password_hash,
-            )
-            session.commit()
-        except IntegrityError:
-            session.rollback()
-            raise HTTPException(
-                status_code=409,
-                detail="Email is already registered",
-            )
-        return UserResponse(
-            id=user.id,
-            email=user.email,
-        )
-
-    @app.post(
-        "/login",
-        response_model=TokenResponse,
-    )
-    def login_endpoint(request: LoginRequest, session: Session = Depends(get_db)):
-        normalized_email = str(request.email).strip().lower()
-        user = users.get_user_by_email(session, normalized_email)
-        if user is None:
-            raise HTTPException(
-                status_code=401,
-                detail="Invalid email or password",
-            )
-        if not verify_password(request.password, user.password_hash):
-            raise HTTPException(
-                status_code=401,
-                detail="Invalid email or password",
-            )
-        access_token = create_access_token(
-            user_id=user.id,
-            secret_key=app.state.jwt_secret_key,
-            expires_delta=access_token_expires_delta,
-        )
-
-        return TokenResponse(
-            access_token=access_token,
-            token_type="bearer",
-        )
+    app.include_router(auth_router)
 
     return app
 
