@@ -1,0 +1,21 @@
+# Only send files needed to build the API image.
+*
+!Dockerfile
+!.dockerignore
+!requirements-api.txt
+!pyproject.toml
+!app/
+!app/**
+!alembic.ini
+!migrations/
+!migrations/**
+
+# Also exclude generated/private files inside the permitted source directories.
+**/__pycache__/
+**/*.py[cod]
+**/.env
+**/.env.*
+**/*.db
+**/*.sqlite
+**/*.sqlite3
+**/*.wav

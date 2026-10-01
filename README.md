@@ -225,6 +225,16 @@ Interactive API documentation is available at:
 
 Apply pending migrations with `alembic upgrade head` before starting an updated application.
 
+## Running the CPU API in Docker
+
+The API image uses the locked Python dependencies and disabled processing mode.
+It accepts authentication and uploads; new processing jobs return `503` until a
+worker is connected. Secrets are supplied at runtime, and a named volume keeps
+SQLite and audio across container replacement.
+
+See [Container Guide](docs/containers.md) for Docker setup, building the image,
+configuration, migrations, startup, replacement, and the repeatable smoke check.
+
 ## Usage
 
 ```text
@@ -339,6 +349,7 @@ Coverage includes registration, login, token validation, ownership enforcement, 
 
 ## Further Documentation
 
+- [Container Guide](docs/containers.md)
 - [Python Runtime](docs/python-runtime.md)
 - [Project Scope](docs/project-scope.md)
 - [Model Compatibility Spike](docs/model-spike.md)
