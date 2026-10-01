@@ -55,3 +55,20 @@ def get_audio_storage_dir() -> Path:
     if directory.exists() and not directory.is_dir():
         raise RuntimeError("ISOJAM_AUDIO_STORAGE_DIR must refer to a directory")
     return directory
+
+
+def get_database_path() -> Path:
+    value = os.environ.get("ISOJAM_DATABASE_PATH")
+    if value is None:
+        path = Path(__file__).resolve().parents[2] / "data" / "isojam.db"
+    else:
+        if not value.strip() or not Path(value).is_absolute():
+            raise RuntimeError(
+                "ISOJAM_DATABASE_PATH must be a nonblank absolute file path"
+            )
+        path = Path(value).resolve()
+    if path.exists() and not path.is_file():
+        raise RuntimeError("ISOJAM_DATABASE_PATH must refer to a file")
+    if path.parent.exists() and not path.parent.is_dir():
+        raise RuntimeError("ISOJAM_DATABASE_PATH parent must be a directory")
+    return path

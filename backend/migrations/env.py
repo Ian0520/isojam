@@ -1,21 +1,23 @@
+import os
 from logging.config import fileConfig
-
-from sqlalchemy import engine_from_config
-from sqlalchemy import pool
+from pathlib import Path
 
 from alembic import context
+from sqlalchemy import URL, engine_from_config, make_url, pool
 
+from app.config import get_database_path
 from app.db_models import Base
-from app.database import DATABASE_URL
-
-import os
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
 config = context.config
 
-database_url = os.getenv("ALEMBIC_DATABASE_URL", DATABASE_URL)
-config.set_main_option("sqlalchemy.url", database_url)
+override_url = os.environ.get("ALEMBIC_DATABASE_URL")
+database_url = (
+    make_url(override_url)
+    if override_url is not None
+    else URL.create("sqlite", database=str(get_database_path()))
+)
 
 # Interpret the config file for Python logging.
 # This line sets up loggers basically.
@@ -46,9 +48,8 @@ def run_migrations_offline() -> None:
     script output.
 
     """
-    url = config.get_main_option("sqlalchemy.url")
     context.configure(
-        url=url,
+        url=database_url,
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
@@ -65,15 +66,27 @@ def run_migrations_online() -> None:
     and associate a connection with the context.
 
     """
+    if database_url.get_backend_name() == "sqlite" and database_url.database not in {
+        None,
+        "",
+        ":memory:",
+    }:
+        Path(database_url.database).parent.mkdir(parents=True, exist_ok=True)
+
+    settings = config.get_section(config.config_ini_section, {})
+    # Pass the URL object directly; avoid URL reparsing and INI '%' interpolation.
+    settings["sqlalchemy.url"] = database_url
     connectable = engine_from_config(
-        config.get_section(config.config_ini_section, {}),
+        settings,
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
     )
 
     with connectable.connect() as connection:
         context.configure(
-            connection=connection, target_metadata=target_metadata, render_as_batch=True,
+            connection=connection,
+            target_metadata=target_metadata,
+            render_as_batch=True,
         )
 
         with context.begin_transaction():

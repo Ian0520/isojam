@@ -5,6 +5,7 @@ import pytest
 import app.config as config
 from app.config import (
     get_audio_storage_dir,
+    get_database_path,
     get_jwt_secret_key,
     get_max_audio_duration_seconds,
     get_max_unfinished_jobs_per_user,
@@ -115,3 +116,55 @@ def test_get_audio_storage_dir_rejects_existing_file(tmp_path, monkeypatch):
     with pytest.raises(RuntimeError, match="ISOJAM_AUDIO_STORAGE_DIR.*directory"):
         get_audio_storage_dir()
     assert existing_file.read_bytes() == b"existing file"
+
+
+def test_get_database_path_defaults_to_project_database_independent_of_working_directory(
+    tmp_path, monkeypatch
+):
+    monkeypatch.delenv("ISOJAM_DATABASE_PATH", raising=False)
+    monkeypatch.chdir(tmp_path)
+    assert (
+        get_database_path()
+        == Path(config.__file__).resolve().parents[2] / "data" / "isojam.db"
+    )
+
+
+def test_get_database_path_reads_absolute_path_without_creating_files(
+    tmp_path, monkeypatch
+):
+    database_path = tmp_path / "metadata storage" / "isojam.db"
+    monkeypatch.setenv("ISOJAM_DATABASE_PATH", str(database_path))
+    assert get_database_path() == database_path
+    assert not database_path.parent.exists()
+
+
+@pytest.mark.parametrize(
+    "value", ["", " ", "data/isojam.db", "../isojam.db", "~/isojam.db"]
+)
+def test_get_database_path_rejects_blank_or_relative_paths(monkeypatch, value):
+    monkeypatch.setenv("ISOJAM_DATABASE_PATH", value)
+    with pytest.raises(RuntimeError, match="ISOJAM_DATABASE_PATH"):
+        get_database_path()
+
+
+def test_get_database_path_rejects_directory(tmp_path, monkeypatch):
+    monkeypatch.setenv("ISOJAM_DATABASE_PATH", str(tmp_path))
+    with pytest.raises(RuntimeError, match="ISOJAM_DATABASE_PATH.*file"):
+        get_database_path()
+
+
+def test_get_database_path_preserves_existing_file(tmp_path, monkeypatch):
+    database_path = tmp_path / "existing.db"
+    database_path.write_bytes(b"existing database")
+    monkeypatch.setenv("ISOJAM_DATABASE_PATH", str(database_path))
+    assert get_database_path() == database_path
+    assert database_path.read_bytes() == b"existing database"
+
+
+def test_get_database_path_rejects_file_as_parent(tmp_path, monkeypatch):
+    parent = tmp_path / "metadata"
+    parent.write_bytes(b"existing file")
+    monkeypatch.setenv("ISOJAM_DATABASE_PATH", str(parent / "isojam.db"))
+    with pytest.raises(RuntimeError, match="ISOJAM_DATABASE_PATH.*parent"):
+        get_database_path()
+    assert parent.read_bytes() == b"existing file"

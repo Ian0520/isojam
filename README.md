@@ -73,13 +73,31 @@ The inference dependency is pinned to an upstream commit that provides the progr
 
 ### Initialize the Database
 
-From the `backend` directory:
+Metadata defaults to the project-level `data/isojam.db`. To use a database file
+on a persistent disk, set an absolute file path before running migrations or
+starting the server:
+
+```bash
+export ISOJAM_DATABASE_PATH=/var/lib/isojam/metadata/isojam.db
+```
+
+The application and Alembic use this same setting. Parent directories are created
+when initializing the application database engine or running online migrations.
+Blank/relative paths, existing directories, and file-valued parents are rejected.
+The application reads the path when its database module loads; restart the server
+to apply a change. Setting a new path does not move or copy an existing database.
+
+From the `backend` directory, initialize or upgrade the selected database:
 
 ```bash
 alembic upgrade head
 ```
 
-Metadata is stored in the project-level `data/isojam.db`. Uploaded and generated audio is stored under `data/`.
+Migrations create/update tables; configuring a path or creating an engine does
+not create the schema. Apply migrations before starting an updated application.
+`ALEMBIC_DATABASE_URL` remains an explicit migration-only override for tests or
+administrative use. Leave it unset for normal deployment so migrations and the
+application target the same database.
 
 The ownership migration assumes there are no existing uploads without owners. Migrating an older database containing such uploads requires a separate data-migration plan.
 
@@ -99,8 +117,8 @@ saved. Blank/relative paths and paths that already refer to a file fail startup.
 The setting is read when the storage module loads; restart the server to apply a
 change. It does not depend on the server's working directory.
 
-This setting controls audio storage. SQLite metadata uses `data/isojam.db` and
-needs its own persistent storage configuration before deployment. Relocating an
+This setting controls audio storage. Configure SQLite metadata separately through
+`ISOJAM_DATABASE_PATH`; both locations must be on persistent storage for deployment. Relocating an
 existing installation requires a file and metadata migration: changing this
 setting does not move files, and existing output records contain absolute paths.
 
