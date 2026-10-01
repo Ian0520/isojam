@@ -25,6 +25,7 @@ def job_limit_client(
         db_session_factory=test_session_factory,
         jwt_secret_key=jwt_secret_key,
         max_unfinished_jobs_per_user=2,
+        processing_mode="local",
     )
     with TestClient(test_app) as client:
         yield client, process_job
@@ -196,6 +197,7 @@ def test_job_admission_enforces_configured_allowance(
         db_session_factory=test_session_factory,
         jwt_secret_key=jwt_secret_key,
         max_unfinished_jobs_per_user=limit,
+        processing_mode="local",
     )
     with TestClient(test_app) as client:
         for _ in range(limit):

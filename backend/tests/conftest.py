@@ -52,6 +52,7 @@ def client(
         model_session_factory=fake_factory,
         db_session_factory=test_session_factory,
         jwt_secret_key=jwt_secret_key,
+        processing_mode="local",
     )
 
     with TestClient(test_app) as test_client:

@@ -52,6 +52,7 @@ app = create_app(
     max_upload_bytes=1024 * 1024,
     max_audio_duration_seconds=60,
     max_unfinished_jobs_per_user=2,
+    processing_mode="local",
 )
 with TestClient(app) as client:
     credentials = {"email": "storage@example.com", "password": "correct-horse-battery-staple"}

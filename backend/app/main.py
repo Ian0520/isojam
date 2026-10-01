@@ -5,10 +5,12 @@ from fastapi import FastAPI
 
 from app.config import (
     ACCESS_TOKEN_EXPIRES_DELTA,
+    PROCESSING_MODES,
     get_jwt_secret_key,
     get_max_audio_duration_seconds,
     get_max_unfinished_jobs_per_user,
     get_max_upload_bytes,
+    get_processing_mode,
 )
 from app.database import SessionLocal
 from app.middleware import RequestSizeLimitMiddleware
@@ -26,6 +28,7 @@ def create_app(
     max_upload_bytes: int | None = None,
     max_audio_duration_seconds: int | None = None,
     max_unfinished_jobs_per_user: int | None = None,
+    processing_mode: str | None = None,
 ):
     if max_upload_bytes is not None and (
         type(max_upload_bytes) is not int or max_upload_bytes <= 0
@@ -41,6 +44,9 @@ def create_app(
         or max_unfinished_jobs_per_user <= 0
     ):
         raise ValueError("max_unfinished_jobs_per_user must be a positive integer")
+
+    if processing_mode is not None and processing_mode not in PROCESSING_MODES:
+        raise ValueError("processing_mode must be 'local' or 'disabled'")
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -60,13 +66,19 @@ def create_app(
             if max_unfinished_jobs_per_user is not None
             else get_max_unfinished_jobs_per_user()
         )
-        session = model_session_factory()
+        app.state.processing_mode = (
+            processing_mode if processing_mode is not None else get_processing_mode()
+        )
+        session = (
+            model_session_factory() if app.state.processing_mode == "local" else None
+        )
         app.state.model_session = session
 
         try:
             yield
         finally:
-            session.close()
+            if session is not None:
+                session.close()
 
     app = FastAPI(lifespan=lifespan)
     app.add_middleware(RequestSizeLimitMiddleware)

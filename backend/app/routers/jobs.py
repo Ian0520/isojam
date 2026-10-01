@@ -55,6 +55,8 @@ def create_job_endpoint(
     upload = uploads.get_upload(session, upload_id)
     if upload is None or current_user.id != upload.user_id:
         raise HTTPException(status_code=404, detail="The upload does not exist")
+    if request.app.state.processing_mode == "disabled":
+        raise HTTPException(status_code=503, detail="Audio processing is unavailable")
     job = jobs.create_job_with_limit(
         session,
         upload_id,

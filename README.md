@@ -35,7 +35,9 @@ FastAPI — authentication and ownership checks
   └── Background task → BS-RoFormer → local audio files
 ```
 
-The application loads one model session during startup and reuses it across processing jobs.
+In local processing mode, the application loads one model session during startup
+and reuses it across processing jobs. Disabled processing mode starts the API
+without importing the inference package or loading a model.
 
 Users own uploads. Job and output ownership is derived through the associated upload. Alembic manages database schema changes.
 
@@ -61,15 +63,25 @@ python3 -m venv .venv
 source .venv/bin/activate
 ```
 
-Install the backend dependencies:
+For local GPU processing, install the backend with the inference dependencies:
+
+```bash
+python -m pip install -e ".[inference]"
+```
+
+For API-only operation, install the base dependencies:
 
 ```bash
 python -m pip install -e .
 ```
 
+Then select disabled processing mode as described below. The inference extra
+contains the model package and its GPU inference dependencies.
+
 Dependencies are declared in `backend/pyproject.toml`. The editable install keeps the virtual environment linked to the local source tree during development.
 
-The inference dependency is pinned to an upstream commit that provides the programmatic `BSRoformerSession` API.
+The optional inference dependency is pinned to an upstream commit that provides
+the programmatic `BSRoformerSession` API.
 
 ### Initialize the Database
 
@@ -169,6 +181,27 @@ Multipart temporary files are closed when parsing is interrupted.
 
 The endpoint still enforces the audio file's own byte limit and validates its
 contents and duration; multipart overhead does not increase the allowed file size.
+
+### Configure Processing Mode
+
+`ISOJAM_PROCESSING_MODE` accepts `local` (the default) or `disabled`. Invalid values
+fail startup before model loading.
+
+Local mode requires the inference extra and a compatible CUDA environment. The
+model loads once during startup and closes during shutdown. A missing inference
+package produces an installation message; model startup failures fail the server
+rather than silently switching modes.
+
+For API-only operation on a CPU host:
+
+```bash
+export ISOJAM_PROCESSING_MODE=disabled
+```
+
+Health, registration, login, uploads, job status and existing output downloads
+remain available. New processing jobs return `503` without creating a job record
+or scheduling work. This mode does not perform CPU inference or submit jobs to an
+external worker; worker integration is still required for a complete hosted flow.
 
 ## Running
 

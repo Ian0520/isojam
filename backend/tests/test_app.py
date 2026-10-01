@@ -16,6 +16,7 @@ def test_app_model_session_lifecycle(
     test_app = create_app(
         model_session_factory=fake_factory,
         jwt_secret_key=jwt_secret_key,
+        processing_mode="local",
     )
 
     with TestClient(test_app) as client:

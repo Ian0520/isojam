@@ -10,6 +10,7 @@ from app.config import (
     get_max_audio_duration_seconds,
     get_max_unfinished_jobs_per_user,
     get_max_upload_bytes,
+    get_processing_mode,
 )
 
 
@@ -168,3 +169,21 @@ def test_get_database_path_rejects_file_as_parent(tmp_path, monkeypatch):
     with pytest.raises(RuntimeError, match="ISOJAM_DATABASE_PATH.*parent"):
         get_database_path()
     assert parent.read_bytes() == b"existing file"
+
+
+def test_get_processing_mode_defaults_to_local(monkeypatch):
+    monkeypatch.delenv("ISOJAM_PROCESSING_MODE", raising=False)
+    assert get_processing_mode() == "local"
+
+
+@pytest.mark.parametrize("mode", ["local", "disabled"])
+def test_get_processing_mode_reads_environment(monkeypatch, mode):
+    monkeypatch.setenv("ISOJAM_PROCESSING_MODE", mode)
+    assert get_processing_mode() == mode
+
+
+@pytest.mark.parametrize("mode", ["", " ", "LOCAL", "worker"])
+def test_get_processing_mode_rejects_invalid_values(monkeypatch, mode):
+    monkeypatch.setenv("ISOJAM_PROCESSING_MODE", mode)
+    with pytest.raises(RuntimeError, match="ISOJAM_PROCESSING_MODE"):
+        get_processing_mode()
