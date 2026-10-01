@@ -69,16 +69,24 @@ For local GPU processing, install the backend with the inference dependencies:
 python -m pip install -e ".[inference]"
 ```
 
-For API-only operation, install the base dependencies:
+For API-only operation on Python 3.12 / Linux x86_64, use the tested dependency
+locks in a fresh environment:
 
 ```bash
-python -m pip install -e .
+python -m pip install pip==26.2.1
+python -m pip install --require-hashes --only-binary=:all: -r requirements-api.txt
+python -m pip install --no-deps --no-build-isolation .
+python -m pip check
 ```
 
 Then select disabled processing mode as described below. The inference extra
-contains the model package and its GPU inference dependencies.
+contains the model package and its GPU inference dependencies. These CPU locks
+do not cover the GPU environment. See [Python Runtime](docs/python-runtime.md)
+for the installation flags, target environment, and lock-update workflow.
 
-Dependencies are declared in `backend/pyproject.toml`. The editable install keeps the virtual environment linked to the local source tree during development.
+Dependencies are declared in `backend/pyproject.toml`. An editable install (`-e`)
+links the environment to the source tree during development. The API deployment
+command installs a built copy of the checked-out source.
 
 The optional inference dependency is pinned to an upstream commit that provides
 the programmatic `BSRoformerSession` API.
@@ -312,10 +320,13 @@ Downloads are available when the job is completed. Missing resources and resourc
 
 Tests use temporary databases and storage, fake model sessions, and test signing secrets.
 
-From `backend`, install the test dependencies if needed:
+From `backend`, use a fresh Python 3.12 / Linux x86_64 environment as described
+in [Python Runtime](docs/python-runtime.md), then install the test dependencies:
 
 ```bash
-python -m pip install -e ".[dev]"
+python -m pip install --require-hashes --only-binary=:all: -r requirements-dev.txt
+python -m pip install --no-deps --no-build-isolation -e .
+python -m pip check
 ```
 
 Run the full suite:
@@ -328,5 +339,6 @@ Coverage includes registration, login, token validation, ownership enforcement, 
 
 ## Further Documentation
 
+- [Python Runtime](docs/python-runtime.md)
 - [Project Scope](docs/project-scope.md)
 - [Model Compatibility Spike](docs/model-spike.md)
