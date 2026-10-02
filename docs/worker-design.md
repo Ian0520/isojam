@@ -15,7 +15,9 @@ Read sections 1-3 first: the current gap, component responsibilities, and normal
 flow. Sections 4-7 specify the recovery rules we will implement in small stages.
 The final sections describe tradeoffs, acceptance checks, and learning milestones.
 
-## 1. What the code does today
+## 1. Baseline before worker implementation
+
+This baseline was reviewed before the metadata migration below.
 
 In local mode, `POST /jobs` checks authentication/ownership and the per-user
 unfinished-job allowance, inserts a pending job, commits, and adds `process_job`
@@ -358,6 +360,37 @@ when accepted jobs remain recoverable across relevant process restarts, publishe
 outputs belong to one valid attempt, concurrency/retries are bounded, and the real
 GPU path is demonstrated. Invited admission, frontend, backups and retention remain
 release requirements in the broader deployment work.
+
+### Implemented slice: job and attempt metadata (2026-10-02)
+
+The first schema slice adds `execution_backend`, `created_at`, and `updated_at`
+to jobs and a separate attempt table with job/attempt identity, phase, and lifecycle
+timestamps. Foreign keys, per-job attempt-number uniqueness, positive numbers,
+and recognized phases/backends are database constraints. Current job creation
+uses the local backend by default. Queued rows can be represented, while queued
+API mode, worker launching, receipt replay, claiming and recovery remain later
+slices. The schema alone gives no execution or concurrency guarantee.
+
+Stored timestamps are UTC; the application receives timezone-aware values. Inputs
+without a timezone are rejected. SQLAlchemy updates refresh `updated_at`; this is
+not a database UPDATE trigger for arbitrary raw SQL. SQLite's default timestamp
+precision is seconds, so these fields are not authority/lease generation tokens.
+Existing jobs receive migration time as the backfilled timestamps, not their
+unknown original creation times. Their backend remains local and no attempt
+history is invented. Downgrading removes the new metadata/attempt history while
+preserving the original job/upload/output records.
+
+The migration recreates SQLite's jobs table to add timestamp defaults. Use the
+established stop -> migrate -> replace workflow. Tests use disposable databases;
+applying this schema to an existing development database is a separate operation.
+
+Validation: 297 backend tests passed in the development environment (Python
+3.12.3, SQLAlchemy 2.0.52, Alembic 1.19.1) and in a disposable non-root container
+using the locked runtime (Python 3.12.14, SQLAlchemy 2.1.1, Alembic 1.20.0).
+Lint/format checks passed across 54 files. The real-container smoke also passed
+migrations, HTTP authentication/upload, disabled-job behavior and exact WAV/data
+persistence after replacement. No exercise volume or development database was
+migrated by these checks.
 
 ## 10. Review and learning checkpoints
 

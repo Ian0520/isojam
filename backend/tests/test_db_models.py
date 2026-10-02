@@ -37,6 +37,9 @@ def test_job_table_definition():
         "id",
         "upload_id",
         "status",
+        "execution_backend",
+        "created_at",
+        "updated_at",
     }
     assert set(table.primary_key.columns.keys()) == {"id"}
 
