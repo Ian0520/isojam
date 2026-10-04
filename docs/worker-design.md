@@ -368,8 +368,8 @@ to jobs and a separate attempt table with job/attempt identity, phase, and lifec
 timestamps. Foreign keys, per-job attempt-number uniqueness, positive numbers,
 and recognized phases/backends are database constraints. Current job creation
 uses the local backend by default. Queued rows can be represented, while queued
-API mode, worker launching, receipt replay, claiming and recovery remain later
-slices. The schema alone gives no execution or concurrency guarantee.
+API mode, worker launching, claiming and recovery remain later slices. Receipt
+replay was added in the following slice. The schema alone gives no execution or concurrency guarantee.
 
 Stored timestamps are UTC; the application receives timezone-aware values. Inputs
 without a timezone are rejected. SQLAlchemy updates refresh `updated_at`; this is
@@ -391,6 +391,41 @@ Lint/format checks passed across 54 files. The real-container smoke also passed
 migrations, HTTP authentication/upload, disabled-job behavior and exact WAV/data
 persistence after replacement. No exercise volume or development database was
 migrated by these checks.
+
+### Implemented slice: submission idempotency (2026-10-04)
+
+`POST /jobs` now accepts an optional `Idempotency-Key` (1-128 ASCII letters,
+digits, `.`, `_`, `:`, `-`). A receipt stores `(user_id, key)`, a versioned canonical
+request fingerprint, the job ID and a UTC creation time. Keys are case-sensitive
+and do not expire automatically. Ownership/authentication precede lookup.
+Same-request retries return the original job's current status/outputs; conflicting
+owned uploads return 409. New or absent keys retain quota-controlled admission.
+A replay can retrieve an accepted job while processing is disabled.
+
+Admission extends the existing SQLite conditional INSERT with a receipt absence
+check. Its write transaction serializes competing submissions and remains open
+until job and receipt commit together. The losing request re-reads the receipt
+after the INSERT, even at a full quota. Only a newly created job schedules local
+background processing. This depends on the current SQLite transaction behavior;
+a database backend/isolation change requires a fresh concurrency review.
+
+The migration only adds a table; existing jobs, attempts and output records remain
+unchanged and do not acquire invented receipts. Downgrade preserves those records
+but deletes keys/replay protection. Tests use disposable databases; no development
+or exercise database is migrated. API acceptance is now retry-safe when a key is
+used. Worker authority, durable dispatch and recovery are still not implemented.
+
+
+Validation: 352 backend tests passed in the development environment and in a
+fresh disposable container using Python 3.12.14 / SQLAlchemy 2.1.1 / Alembic
+1.20.0, running tests as UID 10001. Test dependencies retained their locked pins
+and hashes. Ruff 0.16.9 lint/format checks passed across 58 maintained backend
+files on the host. The updated image also passed the real HTTP/container
+replacement smoke. New tests force simultaneous submissions before the INSERT,
+cover same-key replay and conflicting requests at the quota boundary, inject
+receipt-write failure to prove transaction rollback, and exercise both model-
+created and Alembic-migrated databases. Receipt upgrade/downgrade preserves old
+job/attempt/output data; the complete migrated schema matches current models.
 
 ## 10. Review and learning checkpoints
 

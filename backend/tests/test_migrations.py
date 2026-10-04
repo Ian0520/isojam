@@ -20,6 +20,7 @@ def test_upgrade_head_creates_current_schema(tmp_path, monkeypatch):
         "jobs",
         "job_outputs",
         "job_attempts",
+        "job_submission_receipts",
         "alembic_version",
     }
 
@@ -55,6 +56,7 @@ def test_downgrade_base_removes_schema(tmp_path, monkeypatch):
         "jobs",
         "job_outputs",
         "job_attempts",
+        "job_submission_receipts",
         "alembic_version",
     }
 
@@ -64,6 +66,7 @@ def test_downgrade_base_removes_schema(tmp_path, monkeypatch):
     assert "jobs" not in table_names
     assert "job_outputs" not in table_names
     assert "job_attempts" not in table_names
+    assert "job_submission_receipts" not in table_names
     assert "users" not in table_names
 
 
@@ -86,6 +89,7 @@ def test_downgrade_user_ownership_migration_restores_previous_schema(
 
     assert "users" not in table_names
     assert "job_attempts" not in table_names
+    assert "job_submission_receipts" not in table_names
 
     assert {
         "uploads",

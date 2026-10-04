@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import CheckConstraint, ForeignKey, UniqueConstraint, func
+from sqlalchemy import CheckConstraint, ForeignKey, String, UniqueConstraint, func
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from app.db_types import UTCDateTime
@@ -69,6 +69,27 @@ class JobAttempt(Base):
     )
     started_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
     finished_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
+
+
+class JobSubmissionReceipt(Base):
+    __tablename__ = "job_submission_receipts"
+    __table_args__ = (
+        CheckConstraint(
+            "length(key) BETWEEN 1 AND 128", name="ck_job_submission_key_length"
+        ),
+        CheckConstraint(
+            "length(request_fingerprint) = 64",
+            name="ck_job_submission_fingerprint_length",
+        ),
+    )
+
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), primary_key=True)
+    key: Mapped[str] = mapped_column(String(128), primary_key=True)
+    request_fingerprint: Mapped[str] = mapped_column(String(64))
+    job_id: Mapped[UUID] = mapped_column(ForeignKey("jobs.id"))
+    created_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(), server_default=func.current_timestamp()
+    )
 
 
 class JobOutput(Base):

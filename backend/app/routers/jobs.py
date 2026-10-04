@@ -1,8 +1,9 @@
 from collections.abc import Sequence
 from pathlib import Path
+from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Request
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
@@ -10,7 +11,7 @@ from app.auth import get_current_user
 from app.database import get_db
 from app.db_models import Job, JobOutput, User
 from app.processing import process_job
-from app.repositories import job_outputs, jobs, uploads
+from app.repositories import job_outputs, job_submissions, jobs, uploads
 from app.schemas import CreateJobRequest, JobResponse
 
 router = APIRouter()
@@ -50,36 +51,63 @@ def create_job_endpoint(
     request: Request,
     session: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    idempotency_key: Annotated[
+        str | None,
+        Header(
+            alias="Idempotency-Key",
+            min_length=1,
+            max_length=128,
+            pattern=r"^[A-Za-z0-9._:-]+$",
+            description="Reuse for retries of one submission; use a new key for a new job.",
+        ),
+    ] = None,
 ) -> JobResponse:
     upload_id = upload_request.upload_id
     upload = uploads.get_upload(session, upload_id)
     if upload is None or current_user.id != upload.user_id:
         raise HTTPException(status_code=404, detail="The upload does not exist")
-    if request.app.state.processing_mode == "disabled":
-        raise HTTPException(status_code=503, detail="Audio processing is unavailable")
-    job = jobs.create_job_with_limit(
-        session,
-        upload_id,
-        current_user.id,
-        max_unfinished_jobs=request.app.state.max_unfinished_jobs_per_user,
-    )
-    if job is None:
+    try:
+        if idempotency_key is not None:
+            replay = job_submissions.get_replayed_job(
+                session, current_user.id, upload_id, idempotency_key
+            )
+            if replay is not None:
+                outputs = job_outputs.get_job_outputs(session, replay.id)
+                return serialize_job(replay, outputs)
+        if request.app.state.processing_mode == "disabled":
+            raise HTTPException(
+                status_code=503, detail="Audio processing is unavailable"
+            )
+        submission = job_submissions.create_submission(
+            session,
+            upload_id,
+            current_user.id,
+            key=idempotency_key,
+            max_unfinished_jobs=request.app.state.max_unfinished_jobs_per_user,
+        )
+    except job_submissions.SubmissionConflictError as error:
+        session.rollback()
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    if submission is None:
         session.rollback()
         raise HTTPException(
             status_code=429,
             detail="Unfinished job limit reached; wait for a job to finish",
         )
+    job = submission.job
     job_id = job.id
     session.commit()
 
-    background_tasks.add_task(
-        process_job,
-        job_id,
-        request.app.state.model_session,
-        request.app.state.db_session_factory,
-    )
-
-    return serialize_job(job, [])
+    if submission.created:
+        background_tasks.add_task(
+            process_job,
+            job_id,
+            request.app.state.model_session,
+            request.app.state.db_session_factory,
+        )
+        return serialize_job(job, [])
+    outputs = job_outputs.get_job_outputs(session, job_id)
+    return serialize_job(job, outputs)
 
 
 @router.get("/jobs/{job_id}", response_model=JobResponse)
