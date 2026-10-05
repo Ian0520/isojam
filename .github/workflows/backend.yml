@@ -1,0 +1,43 @@
+name: Backend CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: backend-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Set up browser syntax checker
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+
+      - name: Check browser JavaScript syntax
+        run: node --check backend/app/static/app.js
+
+      - name: Build CPU runtime image
+        run: docker build --platform linux/amd64 --tag isojam-api:ci backend
+
+      - name: Run locked lint and tests as the runtime user
+        run: python3 backend/scripts/check_container.py --image isojam-api:ci
+
+      - name: Verify disabled API and persistent storage
+        run: python3 backend/scripts/smoke_container.py --image isojam-api:ci
+
+      - name: Verify queued execution and restart recovery
+        run: >-
+          python3 backend/scripts/smoke_container.py --image isojam-api:ci
+          --processing-mode queued --dispatch-fake-worker --recover-publication

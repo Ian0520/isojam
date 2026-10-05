@@ -2,6 +2,7 @@ from contextlib import asynccontextmanager
 from datetime import timedelta
 
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 
 from app.config import (
     ACCESS_TOKEN_EXPIRES_DELTA,
@@ -18,6 +19,8 @@ from app.model import create_model_session
 from app.routers.auth import router as auth_router
 from app.routers.jobs import router as jobs_router
 from app.routers.uploads import router as uploads_router
+from app.routers.web import STATIC_DIR
+from app.routers.web import router as web_router
 
 
 def create_app(
@@ -93,6 +96,8 @@ def create_app(
 
     app.include_router(jobs_router)
     app.include_router(auth_router)
+    app.include_router(web_router)
+    app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
     return app
 

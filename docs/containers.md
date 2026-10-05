@@ -7,7 +7,10 @@ available; new jobs return 503. GPU workers and external job dispatch are later
 milestones. Setting `ISOJAM_PROCESSING_MODE=queued` accepts durable pending jobs
 without loading a model. A one-cycle local dispatcher/fake-worker now exercises
 permission/contact, durable fake WAV bundles and atomic database publication.
-Real queued inference and remote control/storage remain later work.
+It can also recover missing publication from confirmed stop proof and a valid
+saved bundle. Real queued inference and remote control/storage remain later work.
+The image includes the browser studio at `/`; it labels queued processing as
+demonstration audio and disabled mode as playback only.
 
 The repository contains the recipe and application files. `docker build` creates
 an image in Docker's storage; `docker run` creates a container from that image and
@@ -81,7 +84,7 @@ ISOJAM_AUDIO_STORAGE_DIR=/var/lib/isojam/audio
 
 Leave `ALEMBIC_DATABASE_URL` unset so migrations and the API select the same
 metadata file. Optional request/upload/job limits use the existing environment
-settings documented in the README.
+settings documented in [Configuration](configuration.md).
 
 ## 3. Create persistent storage and migrate
 
