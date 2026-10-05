@@ -4,8 +4,9 @@ Every push and pull request runs `.github/workflows/backend.yml`. A manually
 triggered run is also available in GitHub Actions. The workflow has read-only
 repository permissions and needs no application secrets or GPU.
 
-The pipeline builds the real Linux x86_64 CPU image, installs hash-locked test
-tools in a disposable container, checks lint/formatting, and runs pytest as the
+The pipeline checks the browser JavaScript syntax with Node 24, then builds the
+real Linux x86_64 CPU image, installs hash-locked test tools in a disposable
+container, checks lint/formatting, and runs pytest as the
 runtime UID/GID 10001. Source is mounted read-only. Tests use temporary metadata
 and audio storage; the actual project database and container settings are unused.
 The two original generated migrations are excluded from formatting/lint checks;
@@ -13,13 +14,13 @@ all maintained application, test, script and migration files are checked.
 
 The runtime image never gains test tools. They are installed in a separate
 container that is removed after it exits. Python, operating-system image and
-runtime dependencies are the same as deployment. The checkout action is pinned
-to a commit, and overlapping runs for the same branch are cancelled.
+runtime dependencies are the same as deployment. The checkout and Node setup
+actions are pinned to commits, and overlapping runs for the same branch are cancelled.
 
 Two real HTTP container smokes then exercise disabled mode and queued fake
 execution with deliberately interrupted publication. They verify migrations,
-authentication, ownership, exact WAV hashes and data persistence across API
-container replacement. Fresh recovery publishes the original stopped attempt
+packaged browser assets and runtime settings, authentication, ownership, exact
+WAV hashes and data persistence across API container replacement. Fresh recovery publishes the original stopped attempt
 without another worker launch. Smoke resources have unique names/ownership labels
 and are removed afterwards. Real GPU inference is validated separately locally.
 
@@ -28,6 +29,8 @@ and are removed afterwards. Real GPU inference is validated separately locally.
 From the repository root with Docker running:
 
 ```bash
+# Optional local browser syntax check (Node 24); also runs in CI.
+node --check backend/app/static/app.js
 docker build --platform linux/amd64 -t isojam-api:ci backend
 python3 backend/scripts/check_container.py --image isojam-api:ci
 python3 backend/scripts/smoke_container.py --image isojam-api:ci
