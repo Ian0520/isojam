@@ -24,6 +24,7 @@ class DispatchResult:
     attempt_id: UUID | None = None
     invocation_id: UUID | None = None
     worker_pid: int | None = None
+    manifest_key: str | None = None
 
 
 def dispatch_once(
@@ -38,7 +39,7 @@ def dispatch_once(
     """Commit authority before one delivery; never infer/retry/free capacity.
 
     Idle includes no eligible work or an occupied slot. A launch error preserves
-    submitting/running evidence for later reconciliation. Successful fake contact
+    submitting/running evidence for later reconciliation. A verified fake bundle
     leaves processing/running state intact; process exit is not publication.
     """
     # Validate both lifetimes before reservation can persist any work.
@@ -81,6 +82,7 @@ def dispatch_once(
         token.attempt_id,
         invocation.invocation_id,
         report.worker_pid,
+        report.manifest_key,
     )
 
 
@@ -141,7 +143,7 @@ def main() -> int:
     finally:
         engine.dispose()
     print(json.dumps(asdict(result), default=str))
-    return 0 if result.status in {"idle", "worker_contact_recorded"} else 1
+    return 0 if result.status in {"idle", "worker_result_ready"} else 1
 
 
 if __name__ == "__main__":

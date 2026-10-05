@@ -8,16 +8,25 @@ from tempfile import TemporaryFile
 from typing import Annotated, Literal, Protocol
 from uuid import UUID
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, ValidationError
+from pydantic import (
+    AwareDatetime,
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    model_validator,
+)
 from sqlalchemy import Engine
 
+from app.config import get_audio_storage_dir
 from app.repositories.job_reservations import JobReservation
+from app.results import LocalResultStore, ResultIdentity, ResultValidationError
 
 MAX_CONTROL_MESSAGE_BYTES = 4096
 PositiveInt = Annotated[int, Field(strict=True, gt=0)]
-WorkerStatus = Literal["contact_recorded", "permission_denied", "heartbeat_rejected"]
+WorkerStatus = Literal["result_ready", "permission_denied", "heartbeat_rejected"]
 WORKER_EXIT_CODES = {
-    "contact_recorded": 0,
+    "result_ready": 0,
     "permission_denied": 3,
     "heartbeat_rejected": 4,
 }
@@ -48,6 +57,13 @@ class WorkerInvocation(BaseModel):
             invocation_id=invocation_id,
         )
 
+    def result_identity(self) -> ResultIdentity:
+        return ResultIdentity(
+            job_id=self.job_id,
+            attempt_id=self.attempt_id,
+            invocation_id=self.invocation_id,
+        )
+
     def reservation(self) -> JobReservation:
         return JobReservation(
             self.job_id,
@@ -60,7 +76,7 @@ class WorkerInvocation(BaseModel):
 
 
 class WorkerReport(BaseModel):
-    """Contact/denial evidence only, never a completed inference result."""
+    """Bundle/denial evidence only; database publication remains separate."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
     protocol_version: Literal[1] = 1
@@ -69,6 +85,13 @@ class WorkerReport(BaseModel):
     invocation_id: UUID
     worker_pid: PositiveInt
     status: WorkerStatus
+    manifest_key: Annotated[str, Field(min_length=1, max_length=256)] | None = None
+
+    @model_validator(mode="after")
+    def manifest_matches_status(self):
+        if (self.status == "result_ready") != (self.manifest_key is not None):
+            raise ValueError("Only result_ready reports require a manifest key")
+        return self
 
 
 class WorkerLaunchError(RuntimeError):
@@ -105,10 +128,13 @@ class LocalFakeWorkerAdapter:
             raise ValueError("Local fake execution requires an absolute database path")
         self.database_path = path.resolve()
         self.timeout_seconds = timeout_seconds
+        self.audio_storage_dir = get_audio_storage_dir()
+        self.results = LocalResultStore(self.audio_storage_dir / "results")
 
     def submit(self, invocation: WorkerInvocation) -> WorkerReport:
         worker_env = os.environ.copy()
         worker_env["ISOJAM_DATABASE_PATH"] = str(self.database_path)
+        worker_env["ISOJAM_AUDIO_STORAGE_DIR"] = str(self.audio_storage_dir)
         # Worker coordination does not use the user's login signing secret.
         worker_env.pop("ISOJAM_JWT_SECRET_KEY", None)
         payload = invocation.model_dump_json().encode("utf-8")
@@ -149,4 +175,16 @@ class LocalFakeWorkerAdapter:
             raise WorkerLaunchError(
                 "Local fake worker report does not match its invocation"
             )
+        if report.status == "result_ready":
+            identity = invocation.result_identity()
+            if report.manifest_key != self.results.manifest_key(identity):
+                raise WorkerLaunchError(
+                    "Worker manifest key does not match its invocation"
+                )
+            try:
+                self.results.verify_bundle(identity)
+            except ResultValidationError as error:
+                raise WorkerLaunchError(
+                    "Worker result bundle could not be verified"
+                ) from error
         return report

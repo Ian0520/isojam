@@ -308,12 +308,15 @@ print('Account, upload, job/receipt state, and exact WAV bytes survived containe
             ]
             dispatched = docker("run", "--rm", *common, args.image, *command, env=env)
             report = json.loads(dispatched.stdout)
-            assert report["status"] == "worker_contact_recorded"
+            assert report["status"] == "worker_result_ready"
             assert report["job_id"] == job_id and report["worker_pid"] > 1
+            assert report["manifest_key"].endswith("/manifest.json")
             repeated = docker("run", "--rm", *common, args.image, *command, env=env)
             assert json.loads(repeated.stdout)["status"] == "idle"
             dispatch_check = """
 import sqlite3
+from pathlib import Path
+from app.results import LocalResultStore, ResultIdentity, FAKE_RESULT_PROFILE
 with sqlite3.connect('/var/lib/isojam/metadata/isojam.db') as connection:
     assert connection.execute('select status from jobs').fetchall() == [('processing',)]
     attempts = connection.execute('select phase, invocation_id, started_at, last_heartbeat_at, finished_at from job_attempts').fetchall()
@@ -322,7 +325,11 @@ with sqlite3.connect('/var/lib/isojam/metadata/isojam.db') as connection:
     assert phase == 'running' and invocation is not None
     assert started is not None and heartbeat >= started and finished is None
     assert connection.execute('select count(*) from job_outputs').fetchone()[0] == 0
-print('Separate dispatcher/fake-worker commands recorded contact; second cycle was idle')
+    job_id, attempt_id = connection.execute('select job_id, id from job_attempts').fetchone()
+identity = ResultIdentity(job_id=job_id, attempt_id=attempt_id, invocation_id=invocation)
+bundle = LocalResultStore(Path('/var/lib/isojam/audio/results')).verify_bundle(identity)
+assert bundle.manifest.profile_id == FAKE_RESULT_PROFILE.id and len(bundle.outputs) == 7
+print('Separate worker wrote seven verified fake WAVs; job remains processing; second cycle idle')
 """
             checked = docker(
                 "run",

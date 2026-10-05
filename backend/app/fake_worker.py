@@ -1,12 +1,16 @@
-"""One local fake invocation: authorization and contact, without inference."""
+"""One local fake invocation: authorization, contact and durable dummy WAVs."""
 
 import argparse
 import os
 import sys
+import wave
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
 from pydantic import ValidationError
 from sqlalchemy import Engine
 
+from app.config import get_audio_storage_dir
 from app.execution import (
     MAX_CONTROL_MESSAGE_BYTES,
     WORKER_EXIT_CODES,
@@ -14,9 +18,27 @@ from app.execution import (
     WorkerReport,
 )
 from app.repositories import job_reservations as reservations
+from app.results import FAKE_RESULT_PROFILE, LocalResultStore
 
 
-def run_fake_worker(engine: Engine, invocation: WorkerInvocation) -> WorkerReport:
+def create_fake_workspace(workspace: Path) -> None:
+    """Seven deterministic tiny WAVs; these are test artifacts, not separation."""
+    for index, stem in enumerate(FAKE_RESULT_PROFILE.required_stems, start=1):
+        with wave.open(str(workspace / f"{stem}.wav"), "wb") as audio:
+            audio.setnchannels(2)
+            audio.setsampwidth(2)
+            audio.setframerate(44100)
+            audio.writeframes(index.to_bytes(2, "little", signed=True) * 16 * 2)
+
+
+def run_fake_worker(
+    engine: Engine,
+    invocation: WorkerInvocation,
+    *,
+    result_store: LocalResultStore | None = None,
+) -> WorkerReport:
+    store = result_store or LocalResultStore(get_audio_storage_dir() / "results")
+    manifest_key = None
     token = invocation.reservation()
     # A repeated grant is denied even for the same invocation. Never proceed
     # when permission fails, raises, or its acknowledgement was lost.
@@ -29,7 +51,12 @@ def run_fake_worker(engine: Engine, invocation: WorkerInvocation) -> WorkerRepor
     elif reservations.record_heartbeat(
         engine, token, invocation_id=invocation.invocation_id
     ):
-        status = "contact_recorded"
+        with TemporaryDirectory(prefix="isojam-fake-") as temporary:
+            workspace = Path(temporary)
+            create_fake_workspace(workspace)
+            bundle = store.write_bundle(invocation.result_identity(), workspace)
+        manifest_key = bundle.manifest_key
+        status = "result_ready"
     else:
         status = "heartbeat_rejected"
     return WorkerReport(
@@ -38,6 +65,7 @@ def run_fake_worker(engine: Engine, invocation: WorkerInvocation) -> WorkerRepor
         invocation_id=invocation.invocation_id,
         worker_pid=os.getpid(),
         status=status,
+        manifest_key=manifest_key,
     )
 
 

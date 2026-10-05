@@ -22,6 +22,7 @@ from app.dispatcher import dispatch_once
 from app.execution import LocalFakeWorkerAdapter, WorkerLaunchError
 from app.fake_worker import run_fake_worker
 from app.main import create_app
+from app.results import ResultIdentity
 from app.security import create_access_token
 from tests.factories import create_test_upload, create_test_user
 
@@ -50,9 +51,20 @@ def test_cycle_runs_separate_fake_worker_and_retains_slot_after_contact(
 ):
     adapter = LocalFakeWorkerAdapter(reservation_engine)
     result = dispatch_once(reservation_engine, adapter, dispatcher_id=uuid4())
-    assert result.status == "worker_contact_recorded"
+    assert result.status == "worker_result_ready"
     assert result.job_id == queued_job
     assert result.worker_pid != os.getpid()
+    identity = ResultIdentity(
+        job_id=result.job_id,
+        attempt_id=result.attempt_id,
+        invocation_id=result.invocation_id,
+    )
+    bundle = adapter.results.verify_bundle(identity)
+    assert result.manifest_key == bundle.manifest_key
+    before = {
+        path.name: (path.stat().st_ino, path.read_bytes())
+        for path in (adapter.results.root / bundle.manifest_key).parent.iterdir()
+    }
     attempt, job = attempt_state(reservation_engine, queued_job)
     assert attempt.id == result.attempt_id
     assert attempt.invocation_id == result.invocation_id
@@ -67,6 +79,10 @@ def test_cycle_runs_separate_fake_worker_and_retains_slot_after_contact(
     with Session(reservation_engine) as session:
         assert session.scalar(select(func.count()).select_from(JobAttempt)) == 1
         assert session.scalar(select(func.count()).select_from(JobOutput)) == 0
+    assert {
+        path.name: (path.stat().st_ino, path.read_bytes())
+        for path in (adapter.results.root / bundle.manifest_key).parent.iterdir()
+    } == before
 
 
 def test_submission_is_committed_and_write_lock_released_before_adapter_call(
@@ -93,7 +109,7 @@ def test_submission_is_committed_and_write_lock_released_before_adapter_call(
     result = dispatch_once(
         reservation_engine, SimpleNamespace(submit=submit), dispatcher_id=uuid4()
     )
-    assert result.status == "worker_contact_recorded"
+    assert result.status == "worker_result_ready"
 
 
 @pytest.mark.parametrize("fail_at", [1, 2])
@@ -148,6 +164,7 @@ def test_worker_permission_denial_does_not_record_contact_or_release_capacity(
         dispatcher_id=uuid4(),
     )
     assert result.status == "worker_permission_denied"
+    assert result.manifest_key is None and not adapter.results.root.exists()
     attempt, job = attempt_state(reservation_engine, queued_job)
     assert attempt.phase == "submitting"
     assert attempt.invocation_id is None
@@ -169,7 +186,7 @@ def test_lost_report_after_worker_contact_preserves_running_attempt_and_never_re
 
     def lose_report(invocation):
         deliveries.append(invocation)
-        assert real_adapter.submit(invocation).status == "contact_recorded"
+        assert real_adapter.submit(invocation).status == "result_ready"
         raise WorkerLaunchError("report lost after contact")
 
     adapter = SimpleNamespace(submit=lose_report)
@@ -184,6 +201,10 @@ def test_lost_report_after_worker_contact_preserves_running_attempt_and_never_re
         == "idle"
     )
     assert len(deliveries) == 1
+    assert (
+        len(real_adapter.results.verify_bundle(deliveries[0].result_identity()).outputs)
+        == 7
+    )
 
 
 def test_spawn_failure_preserves_submission_intent_and_never_retries(
@@ -223,7 +244,7 @@ from app.execution import WorkerInvocation
 from app.fake_worker import run_fake_worker
 from app.database import engine
 invocation = WorkerInvocation.model_validate_json(sys.stdin.buffer.read())
-assert run_fake_worker(engine, invocation).status == 'contact_recorded'
+assert run_fake_worker(engine, invocation).status == 'result_ready'
 Path(sys.argv[1]).write_text(str(os.getpid()))
 time.sleep(30)
 """
@@ -244,6 +265,19 @@ time.sleep(30)
     attempt, job = attempt_state(reservation_engine, queued_job)
     assert attempt.phase == "running" and attempt.last_heartbeat_at is not None
     assert attempt.finished_at is None and job.status == "processing"
+    identity = ResultIdentity(
+        job_id=result.job_id,
+        attempt_id=result.attempt_id,
+        invocation_id=result.invocation_id,
+    )
+    assert (
+        len(
+            LocalFakeWorkerAdapter(reservation_engine)
+            .results.verify_bundle(identity)
+            .outputs
+        )
+        == 7
+    )
     assert (
         dispatch_once(reservation_engine, Mock(), dispatcher_id=uuid4()).status
         == "idle"
@@ -295,10 +329,10 @@ def test_independent_dispatchers_launch_one_invocation(reservation_engine, queue
             assert process.exitcode == 0
         assert sorted(item.get("status", "error") for item in outcomes) == [
             "idle",
-            "worker_contact_recorded",
+            "worker_result_ready",
         ], outcomes
         winner = next(
-            item for item in outcomes if item["status"] == "worker_contact_recorded"
+            item for item in outcomes if item["status"] == "worker_result_ready"
         )
         assert winner["worker_pid"] not in {os.getpid(), *(p.pid for p in processes)}
         attempt, job = attempt_state(reservation_engine, queued_job)
@@ -365,8 +399,18 @@ def test_queued_api_acceptance_then_dispatcher_cli_works_after_api_shutdown(
         report = json.loads(stdout)
         assert report["worker_pid"] not in {os.getpid(), process.pid}
     assert (
-        report["status"] == "worker_contact_recorded"
-        and UUID(report["job_id"]) == job_id
+        report["status"] == "worker_result_ready" and UUID(report["job_id"]) == job_id
+    )
+    identity = ResultIdentity(
+        job_id=job_id,
+        attempt_id=report["attempt_id"],
+        invocation_id=report["invocation_id"],
+    )
+    assert (
+        LocalFakeWorkerAdapter(reservation_engine)
+        .results.verify_bundle(identity)
+        .manifest_key
+        == report["manifest_key"]
     )
     with TestClient(app) as restarted:
         response = restarted.get(f"/jobs/{job_id}", headers=headers)
@@ -374,6 +418,10 @@ def test_queued_api_acceptance_then_dispatcher_cli_works_after_api_shutdown(
         assert (
             response.json()["status"] == "processing"
             and response.json()["outputs"] == {}
+        )
+        assert (
+            restarted.get(f"/jobs/{job_id}/outputs/vocals", headers=headers).status_code
+            == 409
         )
     again = subprocess.run(
         [sys.executable, "-m", "app.dispatcher", "--once", "--adapter", "local-fake"],

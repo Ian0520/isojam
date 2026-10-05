@@ -22,7 +22,7 @@ The current model produces vocals, drums, bass, guitar, piano, other, and instru
 - Audio files are stored on the local filesystem
 - Metadata is stored in SQLite
 - Local processing uses in-process FastAPI background tasks
-- Queued mode has a one-cycle local fake dispatcher/worker; queued inference and result publication are not implemented yet
+- Queued mode has a one-cycle local fake dispatcher/worker that saves verified dummy WAV bundles; queued inference and database result publication are not implemented yet
 - Interrupted jobs are not automatically resumed after a restart
 - Authentication uses access tokens only; refresh tokens are not implemented
 
@@ -236,7 +236,8 @@ Queued mode remains a development exercise until inference/publication is connec
 ### Local dispatcher coordination exercise
 
 After applying migrations, a dispatcher can run separately from the API. From
-`backend`, with the same absolute `ISOJAM_DATABASE_PATH` as the queued API:
+`backend`, with the same absolute `ISOJAM_DATABASE_PATH` and
+`ISOJAM_AUDIO_STORAGE_DIR` as the queued API:
 
 ```bash
 python -m app.dispatcher --once --adapter local-fake
@@ -245,13 +246,23 @@ python -m app.dispatcher --once --adapter local-fake
 This explicitly runs one cycle: commit reservation, commit submission intent,
 then start `python -m app.fake_worker` as a separate child. The fake worker reads
 its validated invocation from standard input, obtains permission and records one
-heartbeat. Neither command starts FastAPI or loads the inference model. The local
-adapter uses the shared SQLite file on the same host; it is not remote GPU control.
+heartbeat, then generates seven tiny deterministic WAVs in a private workspace.
+It saves a verified bundle under `ISOJAM_AUDIO_STORAGE_DIR/results`. These are
+explicitly fake artifacts, not separated audio. Neither command starts FastAPI
+or loads the inference model. The local adapter uses the shared SQLite file on
+the same host; it is not remote GPU control.
 
-The dispatcher prints one JSON report. `worker_contact_recorded` means coordination
-succeeded, not that separation completed. `idle` means no eligible work or occupied
-capacity. Successful fake contact leaves the job processing and its attempt running;
-subsequent cycles stay idle because result publication is not implemented yet.
+The dispatcher prints one JSON report. `worker_result_ready` includes a
+`manifest_key` and means the local fake bundle passed independent verification.
+The manifest records its job/attempt/invocation identity, fake processing profile,
+complete stem set, canonical storage keys, byte sizes, and SHA-256 hashes. Files
+are installed without replacement; the manifest is installed last. Missing,
+changed, invalid or unsafe files cannot pass verification.
+
+`idle` means no eligible work or occupied capacity. The job remains processing,
+its attempt remains running, and no downloadable output rows are created. The
+worker report's `result_ready` is storage evidence, not a database phase change.
+Subsequent cycles stay idle because database publication is not implemented yet.
 Use disposable data for this intermediate exercise. For a fully isolated container
 exercise that creates and removes its own volume, see [Containers](docs/containers.md).
 

@@ -810,3 +810,97 @@ After the whole worker milestone, ask the user to explain in their own words:
 General lesson: persist the work, the right to execute it, and the evidence of its
 result. Design every externally visible state transition around interruption and
 repeated delivery, rather than assuming each operation happens once.
+
+
+### Implemented slice: durable local fake result bundles (2026-10-05)
+
+Stage 3A adds filesystem evidence without publishing a database result. No schema
+migration is needed. Continue on `feat/queued-execution`; a learning pause is not
+a pull-request boundary.
+
+After permission and heartbeat succeed, the local fake worker generates seven
+small deterministic PCM WAVs in a private temporary workspace. It copies them to:
+
+```text
+ISOJAM_AUDIO_STORAGE_DIR/results/
+  jobs/<job-id>/attempts/<attempt-id>/<invocation-id>/
+    vocals.wav
+    drums.wav
+    bass.wav
+    guitar.wav
+    piano.wav
+    other.wav
+    instrumental.wav
+    manifest.json
+```
+
+The processing profile is explicitly `fake-pcm16-stereo-44100hz-16frames-v1`.
+These files contain dummy samples, not separated input audio. The profile labels
+the fake generator; validation enforces the configured stem set, size/duration
+limits and the shared supported-WAV rules, not exact sample equality to a fake
+reference. Future real inference must use its own trusted expected profile.
+
+`app.results.LocalResultStore` copies one file to a private temporary name,
+validates its audio, flushes/fsyncs it and installs its final name using a
+create-only hard link. It fsyncs directory changes. The manifest is written and
+installed only after all stems are finalized. A duplicate storage write must have
+identical finalized bytes; it never replaces a conflicting artifact or manifest.
+Normal writes remove their own staging files. A killed process may leave staging
+files and partial final files; orphan cleanup is not implemented in this slice.
+
+Manifest presence is a readiness marker, not sufficient proof by itself. The
+reader checks expected job/attempt/invocation identity and profile, exactly seven
+unique expected stems, each canonical key, per-file/total sizes and SHA-256, and
+decodes each WAV in bounded blocks. Fake limits are 64 KiB per stem, 448 KiB total,
+one second of audio per stem and 16 KiB for the manifest. Metadata reads and copies
+are bounded. File metadata changes during hashing/decoding are rejected.
+
+The local POSIX store refuses symlink traversal below its trusted configured root
+using directory descriptors and no-follow opens. Nonregular artifacts, including
+FIFOs, are rejected without waiting for a writer. It never opens a path supplied
+by a manifest: it opens the fixed stem name only after its key matches the expected
+invocation location. WAV validation accepts an already-open stream so hashing and
+decoding use the same handle.
+
+The same-host adapter passes the configured audio directory to its child and
+independently verifies the worker's bundle before accepting `result_ready`.
+Dispatcher JSON uses `worker_result_ready` and includes `manifest_key`. The job
+still stays `processing`, its attempt stays `running`, and output rows/downloads
+remain unavailable. Worker-report status is not the database's result_ready phase.
+
+An interrupted writer without a manifest has no ready result. A killed worker or
+lost report after the manifest has been saved leaves verifiable evidence. Neither
+case automatically grants another execution, releases capacity or publishes a
+result. Storage replay is distinct from worker redelivery: storage can compare
+identical bytes while a repeated execution grant remains denied.
+
+The configured root and OS owner are trusted. Read-only permissions and create-only
+application writes do not make files immutable against a hostile owner/root.
+This is a local contract exercise, not remote/private object storage. Later remote
+storage needs conditional writes or immutable versions, scoped credentials and
+safe transfer. Filesystem syncing does not replace backups or guarantee behavior
+on every filesystem/hardware stack. Database publication must independently check
+current authority and atomically store output rows plus completion in the next
+stage; the filesystem cannot commit a SQLite transaction.
+
+Tests cover real writer termination after one installed stem, failure immediately
+before manifest installation, identical/conflicting storage replay, incomplete and
+forged manifests, changed/missing/invalid WAVs, path escapes/symlinks/FIFOs, bounds,
+mid-verification changes, lost worker reports and timeouts after bundle creation,
+and API shutdown followed by a separate dispatcher/worker. Container smoke checks
+the bundle from a fresh container sharing its disposable named volume.
+
+General lesson: durable file evidence and public completion are separate commits.
+Write every artifact first, record a bounded manifest last, independently verify
+it, then publish database state under current authority. Design each boundary so
+a crash leaves evidence that can be examined instead of requiring blind reruns.
+
+
+Stage verification: the full host and locked CPU-container suites each passed
+837 tests. After the final audio-root propagation regression was added, the 97
+result/worker/dispatcher cases passed again on the host and rebuilt image as UID
+10001. The container uses Python 3.12.14, SQLAlchemy 2.1.1 and Alembic 1.20.0.
+The queued HTTP/dispatcher smoke passed on `isojam-api:results-check`, including
+fresh-container verification of all seven WAVs and the manifest on its disposable
+volume. Maintained Python lint/format checks passed. Existing development and
+Docker exercise data were not migrated or removed.

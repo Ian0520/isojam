@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import BinaryIO
 
 import numpy as np
 import soundfile as sf
@@ -12,7 +13,7 @@ class AudioTooLongError(ValueError):
     pass
 
 
-def validate_wav(path: Path, *, max_duration_seconds: int) -> None:
+def validate_wav(path: Path | BinaryIO, *, max_duration_seconds: int) -> None:
     if max_duration_seconds <= 0:
         raise ValueError("max_duration_seconds must be positive")
     try:
