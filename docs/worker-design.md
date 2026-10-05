@@ -1,7 +1,7 @@
 # Durable job execution for the invited beta
 
-Status: proposed design for review, 2026-10-02. This document changes no runtime
-behavior. Hosting provider and monthly budget remain undecided; selecting this
+Status: design proposed on 2026-10-02, with implemented slices recorded below.
+The document itself changes no runtime behavior. Hosting provider and monthly budget remain undecided; selecting this
 design does not provision or purchase anything.
 
 ## Recommendation and reading guide
@@ -429,7 +429,7 @@ job/attempt/output data; the complete migrated schema matches current models.
 
 ### Implemented slice: atomic first-attempt reservation (2026-10-05)
 
-`reserve_next_job(engine, busy_timeout_ms=1000)` owns a fresh SQLite connection
+The initial `reserve_next_job` operation owns a fresh SQLite connection
 and commits one reserved attempt before returning immutable job/attempt IDs.
 `BEGIN IMMEDIATE` acquires the write transaction before checking capacity or
 choosing work. The oldest pending queued job with no attempt history is selected;
@@ -468,6 +468,68 @@ connection settings. The full 399-test backend suite passed on the host and in a
 disposable locked-runtime container (Python 3.12.14 / SQLAlchemy 2.1.1 / Alembic
 1.20.0), running as UID 10001. Ruff lint/format checks passed across 60 maintained
 backend files. No development database or exercise volume was changed.
+
+### Implemented slice: dispatcher authority (2026-10-05)
+
+Attempts now have a nullable dispatcher UUID, a generation (default zero), and a
+nullable UTC reservation expiry. The authority constraint permits either a complete
+owned record (UUID, positive generation, expiry) or an unowned record (null UUID,
+zero generation, null expiry). Migration `d7a6c1039e52` preserves existing rows,
+phases, timestamps, receipts and output paths without inventing authority. Existing
+non-terminal queued attempts still hold capacity, and cannot be reclaimed or
+submitted through the new operations. They need explicit reconciliation rather
+than an automatic migration-triggered execution. Stop control processes before
+migrating; downgrade preserves attempts but discards authority.
+
+`reserve_next_job(engine, dispatcher_id=..., reservation_ttl_seconds=60)` requires
+a dispatcher UUID and commits generation one with an expiry. Use a fresh UUID for
+each dispatcher process lifetime. The lifetime accepts integer seconds from 1 to
+3600; 60 is a provisional default for pre-submission ownership, not a worker
+runtime limit. All operations retain bounded SQLite contention handling and own
+their short `BEGIN IMMEDIATE` transactions. UTC time is sampled from the shared
+control host after obtaining the write lock, including after any lock wait. This
+protocol assumes API/dispatcher access to the same local SQLite host; it is not
+a distributed clock or remote database lease protocol.
+
+`reclaim_reservation(engine, attempt_id, dispatcher_id=...)` atomically transfers
+an expired, owned reservation while its phase is still `reserved`. It increments
+the generation and refreshes expiry, even when the same owner reclaims. It returns
+new immutable reservation information only after commit. The attempt ID/number
+and global occupied slot stay unchanged: takeover is not an inference retry.
+A non-expired, unowned, missing or ineligible attempt returns no reservation.
+
+`begin_submission(engine, reservation)` checks job/attempt identity, number,
+dispatcher/generation, persisted unexpired ownership, and the `reserved` phase in
+one guarded UPDATE. Both authority operations require a pending queued job and
+reject an attempt superseded by a higher attempt number. The input's expiry is
+informational; callers cannot extend authority by changing it. Submission intent
+moves to `submitting` and commits before returning True. A duplicate, stale or
+ineligible call returns False. Only the caller receiving True may make the initial
+external submission; any commit failure raises and grants no permission. Owner
+UUID/generation are internal coordination identifiers, not authentication secrets.
+
+Once intent is committed, expiry cannot authorize takeover or another submission.
+A crash before sending or loss of the provider response needs later reconciliation;
+this slice deliberately keeps capacity occupied rather than guessing whether an
+external execution started. Public job status remains pending and `started_at`
+remains unset. No worker launch, worker execution permission, heartbeat, retry,
+terminal transition or remote control endpoint is implemented in this slice.
+Future writers must preserve these authority and conservative recovery rules.
+
+Validation: 500 backend tests passed on the host and in a disposable locked-runtime
+container (Python 3.12.14 / SQLAlchemy 2.1.1 / Alembic 1.20.0), with tests running
+as UID 10001. Ruff lint/format checks passed across 63 maintained Python files;
+the two original generated migrations remain outside that established lint scope.
+New checks cover stale owners/generations, exact expiry, takeover without a new
+attempt, both submission/takeover transaction orders across expiry, duplicate
+operations in independent spawned processes, restart persistence, real SQLite
+contention at BEGIN and COMMIT, failed-commit rollback, time sampled after lock
+acquisition, authority constraints, and populated upgrade/downgrade preservation.
+Historical migration tests now use historical attempt columns rather than assuming
+that the newest ORM model can insert into an older schema. The queue engine
+fixture is shared by both reservation and authority tests. All databases/audio
+used in verification were disposable; no development database or exercise volume
+was migrated.
 
 ## 10. Review and learning checkpoints
 

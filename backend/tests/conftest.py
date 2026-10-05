@@ -2,8 +2,10 @@ from datetime import timedelta
 from types import SimpleNamespace
 
 import pytest
+from alembic import command
+from alembic.config import Config
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import URL, create_engine
 from sqlalchemy.orm import sessionmaker
 
 from app.database import enable_sqlite_foreign_keys
@@ -96,3 +98,24 @@ def auth_headers(test_session_factory, jwt_secret_key):
 @pytest.fixture
 def wav_bytes():
     return make_wav_bytes()
+
+
+@pytest.fixture(params=["models", "migration"])
+def reservation_engine(request, tmp_path, monkeypatch):
+    path = tmp_path / "reservations.db"
+    url = URL.create("sqlite", database=str(path))
+    # Spawned processes import app.database afresh; keep that engine's configured
+    # path inside this test too, even though reservations use the explicit engine.
+    monkeypatch.setenv("ISOJAM_DATABASE_PATH", str(path))
+    monkeypatch.setenv("ISOJAM_AUDIO_STORAGE_DIR", str(tmp_path / "audio"))
+    if request.param == "migration":
+        monkeypatch.setenv("ALEMBIC_DATABASE_URL", str(url))
+        command.upgrade(Config("alembic.ini"), "head")
+    engine = create_engine(url)
+    enable_sqlite_foreign_keys(engine)
+    if request.param == "models":
+        Base.metadata.create_all(engine)
+    try:
+        yield engine
+    finally:
+        engine.dispose()

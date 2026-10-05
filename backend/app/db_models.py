@@ -53,12 +53,22 @@ class JobAttempt(Base):
             "'result_ready', 'uncertain', 'succeeded', 'failed')",
             name="ck_job_attempts_phase",
         ),
+        CheckConstraint(
+            "(dispatcher_id IS NULL AND dispatcher_generation = 0 "
+            "AND reservation_expires_at IS NULL) OR "
+            "(dispatcher_id IS NOT NULL AND dispatcher_generation > 0 "
+            "AND reservation_expires_at IS NOT NULL)",
+            name="ck_job_attempts_dispatcher_authority",
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     job_id: Mapped[UUID] = mapped_column(ForeignKey("jobs.id"))
     attempt_number: Mapped[int]
     phase: Mapped[str] = mapped_column(server_default="reserved")
+    dispatcher_id: Mapped[UUID | None]
+    dispatcher_generation: Mapped[int] = mapped_column(server_default="0")
+    reservation_expires_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
     created_at: Mapped[datetime] = mapped_column(
         UTCDateTime(), server_default=func.current_timestamp()
     )
