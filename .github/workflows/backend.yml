@@ -20,6 +20,14 @@ jobs:
       - name: Check out source
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
+      - name: Set up browser syntax checker
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+
+      - name: Check browser JavaScript syntax
+        run: node --check backend/app/static/app.js
+
       - name: Build CPU runtime image
         run: docker build --platform linux/amd64 --tag isojam-api:ci backend
 

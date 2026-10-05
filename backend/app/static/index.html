@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <meta
+      name="description"
+      content="Turn songs into instrument stems for your next practice session."
+    />
+    <title>IsoJam — Your practice studio</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+    <script src="/static/app.js" defer></script>
+  </head>
+  <body>
+    <div class="shell">
+      <header class="masthead">
+        <a class="brand" href="/" aria-label="IsoJam home"
+          ><span class="brand-mark" aria-hidden="true">ij</span>IsoJam<span
+            class="brand-note"
+            >PRACTICE STUDIO</span
+          ></a
+        >
+        <span id="service-status" class="service-status">Connecting…</span>
+      </header>
+      <main>
+        <section class="hero" aria-labelledby="hero-title">
+          <div>
+            <p class="eyebrow">FIND YOUR PART. MAKE IT YOURS.</p>
+            <h1 id="hero-title">
+              A song.<br />A little more <em>room to play.</em>
+            </h1>
+            <p class="hero-copy">
+              Separate a recording into instrument tracks.<br /> Listen closely,
+              isolate your part, and get back to practicing.
+            </p>
+          </div>
+          <div class="record-art" aria-hidden="true">
+            <div class="record">
+              <div class="record-label">
+                <span>ISOJAM</span><strong>33⅓</strong
+                ><small>SIDE A · YOUR NEXT SESSION</small>
+              </div>
+            </div>
+            <span class="record-caption"
+              >VOCALS / DRUMS / BASS / GUITAR / PIANO / OTHER</span
+            >
+          </div>
+        </section>
+        <div
+          id="notice"
+          class="notice"
+          role="status"
+          aria-live="polite"
+          hidden
+        ></div>
+        <div class="studio-grid">
+          <aside class="account-column">
+            <section
+              class="panel account-panel"
+              aria-labelledby="account-title"
+            >
+              <p class="eyebrow">YOUR SPACE</p>
+              <div id="signed-out">
+                <h2 id="account-title">Welcome to the studio.</h2>
+                <p class="muted">
+                  Sign in to keep your songs and tracks in your own account.
+                </p>
+                <div class="auth-tabs" aria-label="Account action">
+                  <button
+                    id="login-tab"
+                    class="selected"
+                    type="button"
+                    aria-pressed="true"
+                  >
+                    Sign in</button
+                  ><button id="register-tab" type="button" aria-pressed="false">
+                    Create account
+                  </button>
+                </div>
+                <form id="auth-form">
+                  <label for="email">Email</label
+                  ><input
+                    id="email"
+                    name="email"
+                    type="email"
+                    autocomplete="username"
+                    placeholder="you@example.com"
+                    required
+                  /><label for="password">Password</label
+                  ><input
+                    id="password"
+                    name="password"
+                    type="password"
+                    autocomplete="current-password"
+                    required
+                  /><button
+                    id="auth-submit"
+                    class="button primary full-width"
+                    type="submit"
+                  >
+                    Sign in
+                  </button>
+                </form>
+              </div>
+              <div id="signed-in" hidden>
+                <h2>You’re in.</h2>
+                <p id="account-email" class="account-email"></p>
+                <p class="muted">
+                  Your uploads and results are private to your account.
+                </p>
+                <button
+                  id="logout"
+                  class="button secondary full-width"
+                  type="button"
+                >
+                  Sign out
+                </button>
+              </div>
+            </section>
+            <section class="panel resume-panel" aria-labelledby="resume-title">
+              <h3 id="resume-title">Pick up a session</h3>
+              <p class="muted">
+                Have a job ID? Open its status and tracks here.
+              </p>
+              <form id="resume-form">
+                <label class="sr-only" for="resume-id">Job ID</label
+                ><input
+                  id="resume-id"
+                  type="text"
+                  placeholder="Paste a job ID"
+                  autocomplete="off"
+                  required
+                /><button
+                  id="resume-submit"
+                  class="button secondary full-width"
+                  type="submit"
+                >
+                  Open session
+                </button>
+              </form>
+            </section>
+            <p class="privacy-note">
+              No password is saved in your browser.<br />Your sign-in stays in
+              this tab’s session.
+            </p>
+          </aside>
+          <div class="work-column">
+            <section class="panel upload-panel" aria-labelledby="upload-title">
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow">01 / START WITH A SONG</p>
+                  <h2 id="upload-title">What are we practicing?</h2>
+                </div>
+                <span class="format-chip">WAV</span>
+              </div>
+              <p id="mode-note" class="muted">
+                Checking processing availability…
+              </p>
+              <form id="upload-form">
+                <label class="file-picker" for="audio-file"
+                  ><span class="upload-icon" aria-hidden="true">↑</span
+                  ><strong id="file-name">Choose a WAV recording</strong
+                  ><span id="file-detail">Select a song from your computer</span
+                  ><input
+                    id="audio-file"
+                    type="file"
+                    accept=".wav,audio/wav,audio/x-wav"
+                    required
+                /></label>
+                <div class="upload-footer">
+                  <p id="upload-limits" class="muted"></p>
+                  <button
+                    id="separate"
+                    class="button primary"
+                    type="submit"
+                    disabled
+                  >
+                    Separate audio <span aria-hidden="true">↗</span>
+                  </button>
+                </div>
+              </form>
+            </section>
+            <section
+              class="panel session-panel"
+              aria-labelledby="session-title"
+            >
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow">02 / YOUR SESSION</p>
+                  <h2 id="session-title">Make space for your part.</h2>
+                </div>
+                <span id="job-status" class="status-badge" hidden></span>
+              </div>
+              <div id="empty-session" class="empty-session">
+                <span class="empty-symbol" aria-hidden="true">♫</span>
+                <p>Your tracks will appear here.</p>
+                <small
+                  >Start with a recording, then choose an instrument to preview
+                  or download.</small
+                >
+              </div>
+              <div id="active-session" hidden>
+                <p id="job-message" class="muted" aria-live="polite"></p>
+                <div class="job-meta">
+                  <code id="job-id"></code
+                  ><button id="copy-job" class="text-button" type="button">
+                    Copy ID</button
+                  ><button id="refresh-job" class="text-button" type="button">
+                    Refresh status
+                  </button>
+                </div>
+                <div
+                  id="processing-indicator"
+                  class="processing-indicator"
+                  aria-label="Processing in progress"
+                  hidden
+                >
+                  <span></span>
+                </div>
+                <div id="stems" class="stems"></div>
+                <div id="player-panel" class="player-panel" hidden>
+                  <div>
+                    <p class="eyebrow">NOW PREVIEWING</p>
+                    <strong id="playing-stem"></strong>
+                  </div>
+                  <audio id="player" controls preload="none"></audio>
+                </div>
+              </div>
+            </section>
+          </div>
+        </div>
+      </main>
+      <footer>
+        <span>IsoJam — turn songs into practice tracks.</span
+        ><a href="/docs">Explore the API <span aria-hidden="true">↗</span></a>
+      </footer>
+    </div>
+  </body>
+</html>

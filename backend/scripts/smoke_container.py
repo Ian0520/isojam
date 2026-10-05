@@ -75,6 +75,23 @@ def wait_for_health(name, port):
     raise RuntimeError("API container did not become ready within 30 seconds")
 
 
+def verify_browser_assets(port, processing_mode):
+    for path, mime in (
+        ("/", "text/html"),
+        ("/static/app.js", "javascript"),
+        ("/static/styles.css", "text/css"),
+    ):
+        with urlopen(f"http://127.0.0.1:{port}{path}", timeout=3) as response:
+            body = response.read(128 * 1024)
+            if response.status != 200 or mime not in response.headers["Content-Type"]:
+                raise RuntimeError(f"Browser asset {path} was not packaged correctly")
+            if not body:
+                raise RuntimeError(f"Browser asset {path} is empty")
+    status, info = request(port, "GET", "/ui-info")
+    if status != 200 or info.get("processing_mode") != processing_mode:
+        raise RuntimeError("Browser runtime information disagrees with API mode")
+
+
 def make_wav():
     buffer = io.BytesIO()
     with wave.open(buffer, "wb") as audio:
@@ -203,6 +220,7 @@ print('Non-root runtime, pinned dependencies, and volume permissions passed')
             assert binding["HostIp"] == "127.0.0.1"
             port = int(binding["HostPort"])
             wait_for_health(name, port)
+            verify_browser_assets(port, args.processing_mode)
             if phase == "first-start":
                 status, _ = post_json(port, "/register", credentials)
                 assert status == 201, f"Registration returned {status}"
@@ -459,6 +477,7 @@ print(__import__('json').dumps({artifact.stem: artifact.sha256 for artifact in b
             )
             port = int(ports["8000/tcp"][0]["HostPort"])
             wait_for_health(name, port)
+            verify_browser_assets(port, args.processing_mode)
             status, login = post_json(port, "/login", credentials)
             assert status == 200
             headers = {"Authorization": "Bearer " + login["access_token"]}
