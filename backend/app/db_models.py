@@ -60,6 +60,21 @@ class JobAttempt(Base):
             "AND reservation_expires_at IS NOT NULL)",
             name="ck_job_attempts_dispatcher_authority",
         ),
+        UniqueConstraint("invocation_id", name="uq_job_attempts_invocation"),
+        CheckConstraint(
+            "(execution_authorization_expires_at IS NULL OR "
+            "(dispatcher_id IS NOT NULL AND dispatcher_generation > 0)) AND "
+            "(invocation_id IS NULL OR "
+            "(execution_authorization_expires_at IS NOT NULL AND started_at IS NOT NULL "
+            "AND phase IN ('running', 'result_ready', 'uncertain', 'succeeded', 'failed')))",
+            name="ck_job_attempts_execution_authority",
+        ),
+        CheckConstraint(
+            "last_heartbeat_at IS NULL OR "
+            "(invocation_id IS NOT NULL AND started_at IS NOT NULL "
+            "AND last_heartbeat_at >= started_at)",
+            name="ck_job_attempts_heartbeat_authority",
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
@@ -69,6 +84,11 @@ class JobAttempt(Base):
     dispatcher_id: Mapped[UUID | None]
     dispatcher_generation: Mapped[int] = mapped_column(server_default="0")
     reservation_expires_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
+    execution_authorization_expires_at: Mapped[datetime | None] = mapped_column(
+        UTCDateTime()
+    )
+    invocation_id: Mapped[UUID | None]
+    last_heartbeat_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
     created_at: Mapped[datetime] = mapped_column(
         UTCDateTime(), server_default=func.current_timestamp()
     )

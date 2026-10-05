@@ -1,18 +1,20 @@
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
+from uuid import uuid4
 
 import pytest
 from alembic import command
 from alembic.config import Config
 from fastapi.testclient import TestClient
 from sqlalchemy import URL, create_engine
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import Session, sessionmaker
 
 from app.database import enable_sqlite_foreign_keys
-from app.db_models import Base
+from app.db_models import Base, Job
 from app.main import create_app
+from app.repositories import job_reservations as reservations
 from app.security import create_access_token
-from tests.factories import create_test_user, make_wav_bytes
+from tests.factories import create_test_upload, create_test_user, make_wav_bytes
 
 
 class FakeModelSession:
@@ -119,3 +121,22 @@ def reservation_engine(request, tmp_path, monkeypatch):
         yield engine
     finally:
         engine.dispose()
+
+
+@pytest.fixture
+def clock(monkeypatch):
+    clock = SimpleNamespace(now=datetime(2026, 1, 1, tzinfo=UTC))
+    monkeypatch.setattr(reservations, "_utc_now", lambda: clock.now)
+    return clock
+
+
+@pytest.fixture
+def owned_reservation(reservation_engine, clock):
+    with Session(reservation_engine) as session:
+        user = create_test_user(session)
+        upload = create_test_upload(session, user)
+        session.add(
+            Job(upload_id=upload.id, status="pending", execution_backend="queued")
+        )
+        session.commit()
+    return reservations.reserve_next_job(reservation_engine, dispatcher_id=uuid4())
