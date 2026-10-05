@@ -5,11 +5,12 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
-from sqlalchemy import Connection, Engine, func, insert, select, update
+from sqlalchemy import Connection, Engine, and_, func, insert, or_, select, update
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.sql.elements import ColumnElement
 
-from app.db_models import Job, JobAttempt
+from app.db_models import Job, JobAttempt, JobOutput
+from app.results import ResultIdentity, VerifiedBundle
 
 TERMINAL_ATTEMPT_PHASES = frozenset({"succeeded", "failed"})
 
@@ -435,3 +436,138 @@ def record_heartbeat(
             .returning(JobAttempt.id)
         )
         return changed is not None
+
+
+class PublicationConflictError(ValueError):
+    """Existing database publication cannot be replaced or silently repaired."""
+
+
+def publish_verified_result(
+    engine: Engine,
+    reservation: JobReservation,
+    *,
+    invocation_id: UUID,
+    bundle: VerifiedBundle,
+    busy_timeout_ms: int = 1000,
+) -> bool:
+    """Commit output rows, selected manifest and completion as one unit.
+
+    Trusted callers must verify storage and establish that execution has ended
+    before entering this operation. No file read or worker call belongs inside
+    its transaction. Identity/owner/generation/latest attempt are rechecked here.
+    Deadline expiry does not undo an execution already authorized to run.
+
+    True acknowledges initial or identical existing publication after commit.
+    Stale/ineligible authority returns False. Conflicting existing state raises;
+    failed commits leave durable files for a separate publication retry, never
+    permission for another inference. Existing output records are not overwritten.
+    """
+    _validate_reservation(reservation)
+    _validate_invocation_id(invocation_id)
+    identity = ResultIdentity(
+        job_id=reservation.job_id,
+        attempt_id=reservation.attempt_id,
+        invocation_id=invocation_id,
+    )
+    if bundle.manifest.identity != identity:
+        raise ValueError("Verified bundle does not match publication identity")
+    proposed_outputs = {
+        artifact.stem: str(artifact.path) for artifact in bundle.outputs
+    }
+    if not proposed_outputs or len(proposed_outputs) != len(bundle.outputs):
+        raise ValueError("Verified bundle must contain unique outputs")
+
+    with _reservation_transaction(engine, busy_timeout_ms) as connection:
+        attempt = (
+            connection.execute(
+                select(JobAttempt.__table__).where(
+                    JobAttempt.id == reservation.attempt_id,
+                    JobAttempt.job_id == reservation.job_id,
+                    JobAttempt.attempt_number == reservation.attempt_number,
+                    JobAttempt.dispatcher_id == reservation.dispatcher_id,
+                    JobAttempt.dispatcher_generation
+                    == reservation.dispatcher_generation,
+                    JobAttempt.invocation_id == invocation_id,
+                    JobAttempt.started_at.is_not(None),
+                    or_(
+                        and_(
+                            JobAttempt.phase == "running",
+                            JobAttempt.finished_at.is_(None),
+                            _current_queued_attempt("processing"),
+                        ),
+                        and_(
+                            JobAttempt.phase == "succeeded",
+                            JobAttempt.finished_at.is_not(None),
+                            _current_queued_attempt("completed"),
+                        ),
+                    ),
+                )
+            )
+            .mappings()
+            .one_or_none()
+        )
+        if attempt is None:
+            return False
+        existing_outputs = dict(
+            connection.execute(
+                select(JobOutput.stem, JobOutput.path).where(
+                    JobOutput.job_id == reservation.job_id
+                )
+            ).all()
+        )
+        if attempt["phase"] == "succeeded":
+            if (
+                attempt["result_manifest_key"] != bundle.manifest_key
+                or attempt["result_manifest_sha256"] != bundle.manifest_sha256
+                or existing_outputs != proposed_outputs
+            ):
+                raise PublicationConflictError(
+                    "Result differs from existing publication"
+                )
+            # Repeated acknowledgement does not rewrite rows or timestamps.
+            return True
+        if (
+            existing_outputs
+            or attempt["result_manifest_key"] is not None
+            or attempt["result_manifest_sha256"] is not None
+        ):
+            raise PublicationConflictError(
+                "Running job already has publication records"
+            )
+        now = _utc_now()
+        finished = max(
+            now,
+            attempt["started_at"],
+            attempt["last_heartbeat_at"] or attempt["started_at"],
+        )
+        connection.execute(
+            insert(JobOutput),
+            [
+                {"job_id": reservation.job_id, "stem": stem, "path": path}
+                for stem, path in proposed_outputs.items()
+            ],
+        )
+        connection.execute(
+            update(JobAttempt)
+            .where(JobAttempt.id == reservation.attempt_id)
+            .values(
+                phase="succeeded",
+                finished_at=finished,
+                updated_at=max(finished, attempt["updated_at"]),
+                result_manifest_key=bundle.manifest_key,
+                result_manifest_sha256=bundle.manifest_sha256,
+            )
+        )
+        changed = connection.scalar(
+            update(Job)
+            .where(
+                Job.id == reservation.job_id,
+                Job.execution_backend == "queued",
+                Job.status == "processing",
+            )
+            .values(status="completed", updated_at=func.max(finished, Job.updated_at))
+            .returning(Job.id)
+        )
+        if changed is None:
+            raise RuntimeError("Publication could not complete its processing job")
+        return True

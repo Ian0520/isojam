@@ -75,6 +75,16 @@ class JobAttempt(Base):
             "AND last_heartbeat_at >= started_at)",
             name="ck_job_attempts_heartbeat_authority",
         ),
+        CheckConstraint(
+            "(result_manifest_key IS NULL AND result_manifest_sha256 IS NULL) OR "
+            "(result_manifest_key IS NOT NULL AND result_manifest_sha256 IS NOT NULL "
+            "AND length(result_manifest_key) BETWEEN 1 AND 256 "
+            "AND length(result_manifest_sha256) = 64 "
+            "AND result_manifest_sha256 NOT GLOB '*[^0-9a-f]*' "
+            "AND invocation_id IS NOT NULL AND phase = 'succeeded' "
+            "AND finished_at IS NOT NULL AND finished_at >= started_at)",
+            name="ck_job_attempts_result_publication",
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
@@ -89,6 +99,8 @@ class JobAttempt(Base):
     )
     invocation_id: Mapped[UUID | None]
     last_heartbeat_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
+    result_manifest_key: Mapped[str | None]
+    result_manifest_sha256: Mapped[str | None]
     created_at: Mapped[datetime] = mapped_column(
         UTCDateTime(), server_default=func.current_timestamp()
     )

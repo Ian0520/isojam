@@ -22,7 +22,7 @@ The current model produces vocals, drums, bass, guitar, piano, other, and instru
 - Audio files are stored on the local filesystem
 - Metadata is stored in SQLite
 - Local processing uses in-process FastAPI background tasks
-- Queued mode has a one-cycle local fake dispatcher/worker that saves verified dummy WAV bundles; queued inference and database result publication are not implemented yet
+- Queued mode has a one-cycle local fake dispatcher/worker that saves and publishes verified dummy WAV bundles; real queued inference is not implemented yet
 - Interrupted jobs are not automatically resumed after a restart
 - Authentication uses access tokens only; refresh tokens are not implemented
 
@@ -228,10 +228,11 @@ returns the original job even if the API's processing mode has changed; it does
 not change that job's backend or schedule it again.
 
 Queued jobs remain pending until a dispatcher reserves and submits them. The
-current local fake runner exercises coordination only: it authorizes one invocation
-and reports contact, leaving the job processing without generating stems.
-Pending/processing jobs count toward the allowance and cannot serve outputs (409).
-Queued mode remains a development exercise until inference/publication is connected.
+current local fake runner authorizes one invocation, saves seven dummy WAVs and
+publishes their output records with completion. Pending/processing jobs count
+toward the allowance and cannot serve outputs (409); completed jobs expose owned
+downloads. Queued mode remains a development exercise until real inference,
+reconciliation and hosted storage/control are connected.
 
 ### Local dispatcher coordination exercise
 
@@ -252,22 +253,34 @@ explicitly fake artifacts, not separated audio. Neither command starts FastAPI
 or loads the inference model. The local adapter uses the shared SQLite file on
 the same host; it is not remote GPU control.
 
-The dispatcher prints one JSON report. `worker_result_ready` includes a
-`manifest_key` and means the local fake bundle passed independent verification.
+The dispatcher prints one JSON report. `completed` includes a `manifest_key` and
+means the local worker exited successfully, the fake bundle passed verification,
+and its output records and completion committed together.
 The manifest records its job/attempt/invocation identity, fake processing profile,
 complete stem set, canonical storage keys, byte sizes, and SHA-256 hashes. Files
 are installed without replacement; the manifest is installed last. Missing,
 changed, invalid or unsafe files cannot pass verification.
 
-`idle` means no eligible work or occupied capacity. The job remains processing,
-its attempt remains running, and no downloadable output rows are created. The
-worker report's `result_ready` is storage evidence, not a database phase change.
-Subsequent cycles stay idle because database publication is not implemented yet.
+Publication checks the current attempt, dispatcher owner/generation and invocation
+inside a short SQLite transaction. All seven output rows, the selected manifest
+key/hash, the succeeded attempt and completed job commit together. The owner can
+then download the dummy WAVs through the existing output routes. Identical repeated
+publication acknowledges the saved result without rewriting rows or timestamps.
+The worker's `result_ready` report alone cannot complete a job.
+
+`idle` means no eligible work or occupied capacity. Successful publication releases
+the global slot for another pending queued job. With no pending jobs, a second
+cycle is idle.
 Use disposable data for this intermediate exercise. For a fully isolated container
 exercise that creates and removes its own volume, see [Containers](docs/containers.md).
 
 Launch/report errors print `submission_unresolved` and preserve existing attempt
-state. There is no automatic resubmission, timeout-based release, terminal transition,
+state. Failed publication leaves the files available and the attempt occupied;
+`publication_unresolved`, `publication_denied`, `publication_conflict` and
+`result_invalid` never authorize another execution. A database lock wait returns
+`database_busy` (exit 75). Publication can be retried separately after execution
+has ended; simply running another dispatch cycle does not reconcile an occupied
+attempt. There is no automatic resubmission, timeout-based release,
 expired-reservation scanner or polling loop yet. CLI defaults are 60 seconds for
 pre-submission ownership, 300 for receiving execution permission, 30 for the local
 fake-child wait, and 1000 milliseconds for each SQLite lock wait. The child timeout

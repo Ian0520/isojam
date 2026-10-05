@@ -904,3 +904,92 @@ The queued HTTP/dispatcher smoke passed on `isojam-api:results-check`, including
 fresh-container verification of all seven WAVs and the manifest on its disposable
 volume. Maintained Python lint/format checks passed. Existing development and
 Docker exercise data were not migrated or removed.
+
+
+### Implemented slice: guarded atomic result publication (2026-10-05)
+
+Stage 3B completes the normal local fake-worker path on `feat/queued-execution`.
+The worker saves files and reports result_ready; the local synchronous adapter
+waits for its direct child to exit. An asynchronous provider submission receipt
+cannot fulfill this adapter contract. A complete manifest alone is not evidence
+that an execution has stopped. Lost/invalid reports and worker timeouts still hold
+capacity until a separate reconciliation decision; there is no automatic scanner.
+
+`app.publication.publish_result` verifies the expected bundle before taking a
+SQLite write lock. It then calls the trusted internal
+`job_reservations.publish_verified_result`, which owns a fresh BEGIN IMMEDIATE
+transaction and rechecks job/attempt identity, attempt number, dispatcher owner
+and generation, invocation, queued backend, latest attempt, and running/processing
+state. No file decoding, hashing, copying or worker launch occurs under that lock.
+The start-permission deadline may have expired: it limits when execution starts,
+not whether an already authorized, ended execution may publish its results.
+
+The transaction inserts all output rows with their verified absolute local paths,
+records the selected manifest key/SHA-256, marks the attempt succeeded with a
+controller-side finish time, and marks the job completed. Finish time cannot
+precede start or its last heartbeat if the control clock moves backwards; update
+timestamps never regress during publication. Only a successful commit acknowledges
+publication. The terminal attempt releases the existing single global slot.
+
+An identical repeated publication verifies storage again and checks the selected
+manifest key/hash and exact stored stem/path mapping. It acknowledges the same
+result without rewriting rows or timestamps. Stale authority is denied; a changed
+manifest or mismatched pre-existing output set raises PublicationConflictError.
+The publisher neither overwrites nor silently repairs published records. It grants
+no execution permission and never launches a worker.
+
+Migration `a4c9e7201b63` adds nullable result_manifest_key/result_manifest_sha256
+columns and a check constraint. Publication evidence must be a complete pair,
+with bounded key, lowercase 64-character hexadecimal hash, authorized invocation,
+succeeded phase and valid finish time. Existing attempts remain NULL; upgrade
+cannot invent which manifest was selected. Downgrade preserves output rows/files
+and prior attempt history but removes selected-manifest evidence. Re-upgrade does
+not reconstruct it; an existing publication without that evidence is not blindly
+acknowledged. Stop control processes before applying migrations or downgrading.
+
+Dispatcher JSON now returns completed after publication commits. A result changed
+before publication returns result_invalid; stale authority returns publication_denied;
+conflicting existing records return publication_conflict; other publication errors
+return publication_unresolved. Database contention retains the existing database_busy
+exit-75 behavior. These outcomes preserve the occupied attempt and never resubmit.
+The original job/attempt/invocation and manifest remain inspectable for a later
+publication retry or reconciliation. Automatic restart reconciliation is separate
+work; a new dispatch cycle simply sees an occupied slot.
+
+Existing authenticated GET status/download routes use the published output rows.
+The owner receives all seven fake WAVs after completion; another user receives
+404. Local-mode inference remains its separate existing processing path. This
+same-host POSIX store trusts the OS owner and its configured root. Read-only files
+and create-only application writes are not protection against a hostile OS owner;
+remote storage/serving and scoped execution credentials follow in later stages.
+
+Tests cover publication against model-created and migrated schemas, unchanged
+identical replay, wrong IDs/owner/generation/attempt number, newer attempts,
+changed authority during verification, damaged/profile-mismatched files, conflicting
+records, concurrent independent publishers, reader visibility before commit,
+rollback after output insertion, actual SQLite reader-blocked COMMIT cleanup,
+clock rollback, deadline expiry and slot release. Migration tests preserve existing
+ownership, execution/heartbeat evidence, receipts, output records and WAV bytes
+through upgrade/downgrade/re-upgrade. Dispatcher tests stop the API after acceptance,
+run separate worker/dispatcher processes, restart the API, and compare every owned
+download with the verified WAV. A publication failure can be retried without a
+second worker launch.
+
+General lesson: expensive computation, durable file persistence and public database
+completion are separate boundaries. Keep files as evidence, verify them outside
+the write lock, recheck mutable authority inside it, and publish all related database
+changes atomically. A retry of publication must not become a retry of inference.
+
+
+Stage verification: 918 tests passed on the host and 918 under locked CPU image
+dependencies as UID 10001 (Python 3.12.14, SQLAlchemy 2.1.1, Alembic 1.20.0).
+All 81 maintained Python files passed Ruff lint/format checks. The real-container
+queued smoke passed on `isojam-api:publication-check`: pending acceptance survived
+API replacement, a separate dispatcher/worker published the fake bundle, a fresh
+container verified selected manifest and output paths, the restarted API served
+all seven WAVs with exact manifest hashes, and keyed submission replay returned
+the completed job. All migrations used disposable databases/volumes.
+
+The planned local queued-execution feature branch is ready for a user-opened PR
+before the next feature. Real GPU inference, automatic reconciliation, private
+remote storage/control and hosted deployment remain separate milestones.

@@ -14,7 +14,9 @@ from app.execution import (
     WorkerInvocation,
     WorkerLaunchError,
 )
+from app.publication import publish_result
 from app.repositories import job_reservations as reservations
+from app.results import ResultValidationError
 
 
 @dataclass(frozen=True)
@@ -36,11 +38,11 @@ def dispatch_once(
     authorization_ttl_seconds: int = 300,
     busy_timeout_ms: int = 1000,
 ) -> DispatchResult:
-    """Commit authority before one delivery; never infer/retry/free capacity.
+    """Commit authority before delivery, then publish verified successful results.
 
     Idle includes no eligible work or an occupied slot. A launch error preserves
-    submitting/running evidence for later reconciliation. A verified fake bundle
-    leaves processing/running state intact; process exit is not publication.
+    submitting/running evidence for later reconciliation. Only a verified bundle
+    from an ended execution can publish output rows and completion together.
     """
     # Validate both lifetimes before reservation can persist any work.
     for name, value in (
@@ -76,8 +78,30 @@ def dispatch_once(
             token.attempt_id,
             invocation.invocation_id,
         )
+    status = "worker_" + report.status
+    if report.status == "result_ready":
+        try:
+            published = publish_result(
+                engine,
+                token,
+                invocation_id=invocation.invocation_id,
+                store=adapter.results,
+                busy_timeout_ms=busy_timeout_ms,
+            )
+        except ResultValidationError:
+            status = "result_invalid"
+        except reservations.PublicationConflictError:
+            status = "publication_conflict"
+        except reservations.ReservationBusyError:
+            raise
+        except Exception:
+            # The worker has already ended. Preserve its bundle and running state
+            # if publication failed; a new dispatch cycle must not resubmit it.
+            status = "publication_unresolved"
+        else:
+            status = "completed" if published else "publication_denied"
     return DispatchResult(
-        "worker_" + report.status,
+        status,
         token.job_id,
         token.attempt_id,
         invocation.invocation_id,
@@ -143,7 +167,7 @@ def main() -> int:
     finally:
         engine.dispose()
     print(json.dumps(asdict(result), default=str))
-    return 0 if result.status in {"idle", "worker_result_ready"} else 1
+    return 0 if result.status in {"idle", "completed"} else 1
 
 
 if __name__ == "__main__":

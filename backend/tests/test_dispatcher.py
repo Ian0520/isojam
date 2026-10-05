@@ -22,6 +22,7 @@ from app.dispatcher import dispatch_once
 from app.execution import LocalFakeWorkerAdapter, WorkerLaunchError
 from app.fake_worker import run_fake_worker
 from app.main import create_app
+from app.publication import publish_result
 from app.results import ResultIdentity
 from app.security import create_access_token
 from tests.factories import create_test_upload, create_test_user
@@ -45,13 +46,13 @@ def attempt_state(engine, job_id):
         return attempt, job
 
 
-def test_cycle_runs_separate_fake_worker_and_retains_slot_after_contact(
+def test_cycle_publishes_separate_worker_results_and_acknowledges_completed_job(
     reservation_engine,
     queued_job,
 ):
     adapter = LocalFakeWorkerAdapter(reservation_engine)
     result = dispatch_once(reservation_engine, adapter, dispatcher_id=uuid4())
-    assert result.status == "worker_result_ready"
+    assert result.status == "completed"
     assert result.job_id == queued_job
     assert result.worker_pid != os.getpid()
     identity = ResultIdentity(
@@ -68,17 +69,19 @@ def test_cycle_runs_separate_fake_worker_and_retains_slot_after_contact(
     attempt, job = attempt_state(reservation_engine, queued_job)
     assert attempt.id == result.attempt_id
     assert attempt.invocation_id == result.invocation_id
-    assert attempt.phase == "running"
+    assert attempt.phase == "succeeded"
     assert attempt.last_heartbeat_at >= attempt.started_at
-    assert attempt.finished_at is None
-    assert job.status == "processing"
+    assert attempt.finished_at >= attempt.last_heartbeat_at
+    assert attempt.result_manifest_key == bundle.manifest_key
+    assert attempt.result_manifest_sha256 == bundle.manifest_sha256
+    assert job.status == "completed"
     assert (
         dispatch_once(reservation_engine, adapter, dispatcher_id=uuid4()).status
         == "idle"
     )
     with Session(reservation_engine) as session:
         assert session.scalar(select(func.count()).select_from(JobAttempt)) == 1
-        assert session.scalar(select(func.count()).select_from(JobOutput)) == 0
+        assert session.scalar(select(func.count()).select_from(JobOutput)) == 7
     assert {
         path.name: (path.stat().st_ino, path.read_bytes())
         for path in (adapter.results.root / bundle.manifest_key).parent.iterdir()
@@ -107,9 +110,13 @@ def test_submission_is_committed_and_write_lock_released_before_adapter_call(
         return run_fake_worker(reservation_engine, invocation)
 
     result = dispatch_once(
-        reservation_engine, SimpleNamespace(submit=submit), dispatcher_id=uuid4()
+        reservation_engine,
+        SimpleNamespace(
+            submit=submit, results=LocalFakeWorkerAdapter(reservation_engine).results
+        ),
+        dispatcher_id=uuid4(),
     )
-    assert result.status == "worker_result_ready"
+    assert result.status == "completed"
 
 
 @pytest.mark.parametrize("fail_at", [1, 2])
@@ -328,16 +335,15 @@ def test_independent_dispatchers_launch_one_invocation(reservation_engine, queue
             process.join(timeout=10)
             assert process.exitcode == 0
         assert sorted(item.get("status", "error") for item in outcomes) == [
+            "completed",
             "idle",
-            "worker_result_ready",
         ], outcomes
-        winner = next(
-            item for item in outcomes if item["status"] == "worker_result_ready"
-        )
+        winner = next(item for item in outcomes if item["status"] == "completed")
         assert winner["worker_pid"] not in {os.getpid(), *(p.pid for p in processes)}
         attempt, job = attempt_state(reservation_engine, queued_job)
         assert attempt.invocation_id == winner["invocation_id"]
-        assert attempt.last_heartbeat_at is not None and job.status == "processing"
+        assert attempt.last_heartbeat_at is not None and job.status == "completed"
+        assert attempt.phase == "succeeded"
         with Session(reservation_engine) as session:
             assert session.scalar(select(func.count()).select_from(JobAttempt)) == 1
     finally:
@@ -398,30 +404,49 @@ def test_queued_api_acceptance_then_dispatcher_cli_works_after_api_shutdown(
         assert process.returncode == 0, stderr
         report = json.loads(stdout)
         assert report["worker_pid"] not in {os.getpid(), process.pid}
-    assert (
-        report["status"] == "worker_result_ready" and UUID(report["job_id"]) == job_id
-    )
+    assert report["status"] == "completed" and UUID(report["job_id"]) == job_id
     identity = ResultIdentity(
         job_id=job_id,
         attempt_id=report["attempt_id"],
         invocation_id=report["invocation_id"],
     )
-    assert (
-        LocalFakeWorkerAdapter(reservation_engine)
-        .results.verify_bundle(identity)
-        .manifest_key
-        == report["manifest_key"]
-    )
+    bundle = LocalFakeWorkerAdapter(reservation_engine).results.verify_bundle(identity)
+    assert bundle.manifest_key == report["manifest_key"]
+    with factory() as session:
+        another_user = create_test_user(session, email="another@example.com")
+        another_id = another_user.id
+        session.commit()
+    another_headers = {
+        "Authorization": "Bearer "
+        + create_access_token(
+            user_id=another_id,
+            secret_key=jwt_secret_key,
+            expires_delta=timedelta(minutes=5),
+        )
+    }
     with TestClient(app) as restarted:
         response = restarted.get(f"/jobs/{job_id}", headers=headers)
         assert response.status_code == 200
+        assert response.json()["status"] == "completed"
+        assert set(response.json()["outputs"]) == {
+            artifact.stem for artifact in bundle.outputs
+        }
+        for artifact in bundle.outputs:
+            downloaded = restarted.get(
+                f"/jobs/{job_id}/outputs/{artifact.stem}", headers=headers
+            )
+            assert (
+                downloaded.status_code == 200
+                and downloaded.content == artifact.path.read_bytes()
+            )
+            assert (
+                restarted.get(
+                    f"/jobs/{job_id}/outputs/{artifact.stem}", headers=another_headers
+                ).status_code
+                == 404
+            )
         assert (
-            response.json()["status"] == "processing"
-            and response.json()["outputs"] == {}
-        )
-        assert (
-            restarted.get(f"/jobs/{job_id}/outputs/vocals", headers=headers).status_code
-            == 409
+            restarted.get(f"/jobs/{job_id}", headers=another_headers).status_code == 404
         )
     again = subprocess.run(
         [sys.executable, "-m", "app.dispatcher", "--once", "--adapter", "local-fake"],
@@ -449,3 +474,103 @@ def test_invalid_dispatch_settings_create_no_attempt(
         dispatch_once(reservation_engine, adapter, dispatcher_id=uuid4(), **kwargs)
     adapter.submit.assert_not_called()
     assert attempt_state(reservation_engine, queued_job)[0] is None
+
+
+def test_publication_commit_failure_keeps_bundle_and_slot_and_retry_does_not_launch_worker(
+    reservation_engine, queued_job
+):
+    adapter = LocalFakeWorkerAdapter(reservation_engine)
+    deliveries = []
+
+    def submit(invocation):
+        deliveries.append(invocation)
+        return adapter.submit(invocation)
+
+    commits = 0
+
+    def fail_publication_commit(connection):
+        nonlocal commits
+        commits += 1
+        if commits == 3:
+            raise RuntimeError("publication commit failed")
+
+    event.listen(reservation_engine, "commit", fail_publication_commit)
+    try:
+        result = dispatch_once(
+            reservation_engine,
+            SimpleNamespace(submit=submit, results=adapter.results),
+            dispatcher_id=uuid4(),
+        )
+    finally:
+        event.remove(reservation_engine, "commit", fail_publication_commit)
+    assert result.status == "publication_unresolved" and result.manifest_key is not None
+    attempt, job = attempt_state(reservation_engine, queued_job)
+    assert attempt.phase == "running" and attempt.finished_at is None
+    assert attempt.result_manifest_key is None and job.status == "processing"
+    with Session(reservation_engine) as session:
+        assert session.scalar(select(func.count()).select_from(JobOutput)) == 0
+    no_launch = Mock()
+    assert (
+        dispatch_once(reservation_engine, no_launch, dispatcher_id=uuid4()).status
+        == "idle"
+    )
+    no_launch.submit.assert_not_called()
+    invocation = deliveries[0]
+    assert publish_result(
+        reservation_engine,
+        invocation.reservation(),
+        invocation_id=invocation.invocation_id,
+        store=adapter.results,
+    )
+    assert len(deliveries) == 1
+    assert attempt_state(reservation_engine, queued_job)[1].status == "completed"
+
+
+@pytest.mark.parametrize(
+    "change", ["missing_file", "stale_owner", "conflicting_outputs"]
+)
+def test_result_change_before_publication_does_not_complete_or_release_attempt(
+    reservation_engine, queued_job, change
+):
+    real_adapter = LocalFakeWorkerAdapter(reservation_engine)
+
+    def submit_then_change(invocation):
+        report = real_adapter.submit(invocation)
+        if change == "missing_file":
+            bundle = real_adapter.results.verify_bundle(invocation.result_identity())
+            bundle.outputs[0].path.unlink()
+        else:
+            with Session(reservation_engine) as session:
+                if change == "stale_owner":
+                    session.get(
+                        JobAttempt, invocation.attempt_id
+                    ).dispatcher_generation += 1
+                else:
+                    session.add(
+                        JobOutput(
+                            job_id=queued_job, stem="vocals", path="/unexpected.wav"
+                        )
+                    )
+                session.commit()
+        return report
+
+    result = dispatch_once(
+        reservation_engine,
+        SimpleNamespace(submit=submit_then_change, results=real_adapter.results),
+        dispatcher_id=uuid4(),
+    )
+    expected = {
+        "missing_file": "result_invalid",
+        "stale_owner": "publication_denied",
+        "conflicting_outputs": "publication_conflict",
+    }
+    assert result.status == expected[change]
+    attempt, job = attempt_state(reservation_engine, queued_job)
+    assert attempt.phase == "running" and attempt.finished_at is None
+    assert attempt.result_manifest_key is None and job.status == "processing"
+    no_launch = Mock()
+    assert (
+        dispatch_once(reservation_engine, no_launch, dispatcher_id=uuid4()).status
+        == "idle"
+    )
+    no_launch.submit.assert_not_called()

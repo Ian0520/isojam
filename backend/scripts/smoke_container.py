@@ -308,7 +308,7 @@ print('Account, upload, job/receipt state, and exact WAV bytes survived containe
             ]
             dispatched = docker("run", "--rm", *common, args.image, *command, env=env)
             report = json.loads(dispatched.stdout)
-            assert report["status"] == "worker_result_ready"
+            assert report["status"] == "completed"
             assert report["job_id"] == job_id and report["worker_pid"] > 1
             assert report["manifest_key"].endswith("/manifest.json")
             repeated = docker("run", "--rm", *common, args.image, *command, env=env)
@@ -318,18 +318,23 @@ import sqlite3
 from pathlib import Path
 from app.results import LocalResultStore, ResultIdentity, FAKE_RESULT_PROFILE
 with sqlite3.connect('/var/lib/isojam/metadata/isojam.db') as connection:
-    assert connection.execute('select status from jobs').fetchall() == [('processing',)]
+    assert connection.execute('select status from jobs').fetchall() == [('completed',)]
     attempts = connection.execute('select phase, invocation_id, started_at, last_heartbeat_at, finished_at from job_attempts').fetchall()
     assert len(attempts) == 1
     phase, invocation, started, heartbeat, finished = attempts[0]
-    assert phase == 'running' and invocation is not None
-    assert started is not None and heartbeat >= started and finished is None
-    assert connection.execute('select count(*) from job_outputs').fetchone()[0] == 0
+    assert phase == 'succeeded' and invocation is not None
+    assert started is not None and heartbeat >= started and finished >= heartbeat
+    assert connection.execute('select count(*) from job_outputs').fetchone()[0] == 7
+    selected_key, selected_hash = connection.execute('select result_manifest_key, result_manifest_sha256 from job_attempts').fetchone()
+    output_rows = dict(connection.execute('select stem, path from job_outputs').fetchall())
     job_id, attempt_id = connection.execute('select job_id, id from job_attempts').fetchone()
 identity = ResultIdentity(job_id=job_id, attempt_id=attempt_id, invocation_id=invocation)
 bundle = LocalResultStore(Path('/var/lib/isojam/audio/results')).verify_bundle(identity)
 assert bundle.manifest.profile_id == FAKE_RESULT_PROFILE.id and len(bundle.outputs) == 7
-print('Separate worker wrote seven verified fake WAVs; job remains processing; second cycle idle')
+assert selected_key == bundle.manifest_key and selected_hash == bundle.manifest_sha256
+assert output_rows == {artifact.stem: str(artifact.path) for artifact in bundle.outputs}
+print('Separate worker published seven verified fake WAVs; job completed; second cycle idle')
+print(__import__('json').dumps({artifact.stem: artifact.sha256 for artifact in bundle.outputs}))
 """
             checked = docker(
                 "run",
@@ -341,7 +346,58 @@ print('Separate worker wrote seven verified fake WAVs; job remains processing; s
                 dispatch_check,
                 env=env,
             )
-            print(checked.stdout.strip(), flush=True)
+            lines = checked.stdout.strip().splitlines()
+            print(lines[0], flush=True)
+            expected_hashes = json.loads(lines[-1])
+            # Restart the API after publication, then download via real HTTP.
+            docker(
+                "run",
+                "--detach",
+                "--name",
+                name,
+                *common,
+                "--publish",
+                "127.0.0.1::8000",
+                args.image,
+                env=env,
+            )
+            ports = json.loads(
+                docker(
+                    "inspect", "--format", "{{json .NetworkSettings.Ports}}", name
+                ).stdout
+            )
+            port = int(ports["8000/tcp"][0]["HostPort"])
+            wait_for_health(name, port)
+            status, login = post_json(port, "/login", credentials)
+            assert status == 200
+            headers = {"Authorization": "Bearer " + login["access_token"]}
+            status, completed = request(port, "GET", f"/jobs/{job_id}", headers=headers)
+            assert status == 200 and completed["status"] == "completed"
+            assert set(completed["outputs"]) == set(expected_hashes)
+            status, replayed = post_json(
+                port,
+                "/jobs",
+                {"upload_id": upload_id},
+                {**headers, "Idempotency-Key": "container-request"},
+            )
+            assert status == 200 and replayed == completed
+            for stem, expected_hash in expected_hashes.items():
+                req = Request(
+                    f"http://127.0.0.1:{port}" + completed["outputs"][stem],
+                    headers=headers,
+                )
+                with urlopen(req, timeout=3) as response:
+                    raw = response.read(64 * 1024 + 1)
+                    assert (
+                        response.status == 200
+                        and hashlib.sha256(raw).hexdigest() == expected_hash
+                    )
+            status, _ = request(port, "GET", completed["outputs"]["vocals"])
+            assert status == 401
+            print(
+                "Restarted API served all seven owned WAVs with exact published hashes; keyed replay preserved completion",
+                flush=True,
+            )
         print("Container smoke passed", flush=True)
     except Exception:
         if owns_resource("container", name, marker):

@@ -6,8 +6,8 @@ Authentication, uploads, job status, and existing output downloads remain
 available; new jobs return 503. GPU workers and external job dispatch are later
 milestones. Setting `ISOJAM_PROCESSING_MODE=queued` accepts durable pending jobs
 without loading a model. A one-cycle local dispatcher/fake-worker now exercises
-permission/contact and durable fake WAV bundles; queued inference and database
-result publication remain later work.
+permission/contact, durable fake WAV bundles and atomic database publication.
+Real queued inference and remote control/storage remain later work.
 
 The repository contains the recipe and application files. `docker build` creates
 an image in Docker's storage; `docker run` creates a container from that image and
@@ -188,10 +188,12 @@ real `.env.container` or use `isojam-data`. It checks:
 With `--dispatch-fake-worker` (queued mode only), the script additionally runs a
 separate one-cycle dispatcher container after the API is stopped. The same CPU
 image uses a different command to launch its local fake-worker child. It verifies
-one running attempt with an invocation/start/heartbeat, a processing job, no
-database output rows, seven verified fake WAVs plus their manifest in the volume,
-and an idle second dispatcher container. This demonstrates process roles and the
-shared same-host volume, without loading the model or completing separation.
+one succeeded attempt with invocation/start/heartbeat/finish evidence, a completed
+job, seven published output rows, and verified fake WAVs plus their selected
+manifest in the volume. It checks an idle second dispatcher container, restarts
+the API, replays the original submission key, and downloads all seven owned WAVs
+with exact published hashes. This demonstrates process roles, publication and
+the shared same-host volume. The files are dummy audio; the model is not loaded.
 
 The script publishes a dynamically allocated port on host loopback and removes
 only resources carrying its run-specific label, including on failure. The built
@@ -272,3 +274,17 @@ stem set, canonical paths, sizes, SHA-256 and WAV contents. The job stayed proce
 the attempt stayed running, no output rows were published, and the second dispatch
 cycle stayed idle. The script cleaned up its labeled containers and volume; the
 existing Docker exercise volume was preserved.
+
+
+### Atomic publication and owned download verification (2026-10-05)
+
+The `isojam-api:publication-check` image passed the queued smoke with
+`--dispatch-fake-worker`. After the separate worker exited, the dispatcher
+published all seven output rows with the selected manifest and job/attempt
+completion. A fresh container verified the stored paths and manifest hash; an
+idle second cycle created no additional work. The script then restarted the API,
+logged in, downloaded every owned dummy WAV with its exact published SHA-256,
+and replayed the original submission key to retrieve the completed job.
+The full locked suite passed 918 tests as UID 10001. Verification resources were
+removed using their run-specific labels. For an existing database, stop control
+processes and apply `python -m alembic upgrade head` before using this dispatcher.

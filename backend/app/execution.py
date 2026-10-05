@@ -99,6 +99,13 @@ class WorkerLaunchError(RuntimeError):
 
 
 class ExecutionAdapter(Protocol):
+    """Trusted synchronous delivery: return only after execution has ended.
+
+    An asynchronous provider acknowledgement cannot fulfill this local contract.
+    """
+
+    results: LocalResultStore
+
     def submit(self, invocation: WorkerInvocation) -> WorkerReport: ...
 
 
