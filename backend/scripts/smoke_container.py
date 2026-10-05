@@ -319,11 +319,14 @@ from pathlib import Path
 from app.results import LocalResultStore, ResultIdentity, FAKE_RESULT_PROFILE
 with sqlite3.connect('/var/lib/isojam/metadata/isojam.db') as connection:
     assert connection.execute('select status from jobs').fetchall() == [('completed',)]
-    attempts = connection.execute('select phase, invocation_id, started_at, last_heartbeat_at, finished_at from job_attempts').fetchall()
+    attempts = connection.execute('select phase, invocation_id, started_at, last_heartbeat_at, execution_stopped_at, execution_exit_code, finished_at from job_attempts').fetchall()
     assert len(attempts) == 1
-    phase, invocation, started, heartbeat, finished = attempts[0]
+    phase, invocation, started, heartbeat, stopped, exit_code, finished = attempts[0]
     assert phase == 'succeeded' and invocation is not None
-    assert started is not None and heartbeat >= started and finished >= heartbeat
+    assert started is not None and heartbeat >= started and stopped >= heartbeat
+    assert finished >= stopped and exit_code == 0
+    worker_id, worker_pid = connection.execute('select local_worker_id, local_worker_pid from job_attempts').fetchone()
+    assert __import__('uuid').UUID(worker_id) and worker_pid > 1
     assert connection.execute('select count(*) from job_outputs').fetchone()[0] == 7
     selected_key, selected_hash = connection.execute('select result_manifest_key, result_manifest_sha256 from job_attempts').fetchone()
     output_rows = dict(connection.execute('select stem, path from job_outputs').fetchall())

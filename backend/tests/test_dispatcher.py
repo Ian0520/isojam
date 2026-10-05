@@ -23,6 +23,7 @@ from app.execution import LocalFakeWorkerAdapter, WorkerLaunchError
 from app.fake_worker import run_fake_worker
 from app.main import create_app
 from app.publication import publish_result
+from app.repositories import job_reservations as reservations
 from app.results import ResultIdentity
 from app.security import create_access_token
 from tests.factories import create_test_upload, create_test_user
@@ -71,7 +72,10 @@ def test_cycle_publishes_separate_worker_results_and_acknowledges_completed_job(
     assert attempt.invocation_id == result.invocation_id
     assert attempt.phase == "succeeded"
     assert attempt.last_heartbeat_at >= attempt.started_at
-    assert attempt.finished_at >= attempt.last_heartbeat_at
+    assert (
+        attempt.finished_at >= attempt.execution_stopped_at >= attempt.last_heartbeat_at
+    )
+    assert attempt.execution_exit_code == 0
     assert attempt.result_manifest_key == bundle.manifest_key
     assert attempt.result_manifest_sha256 == bundle.manifest_sha256
     assert job.status == "completed"
@@ -107,7 +111,17 @@ def test_submission_is_committed_and_write_lock_released_before_adapter_call(
                 connection.rollback()
         finally:
             observed.dispose()
-        return run_fake_worker(reservation_engine, invocation)
+        invocation = invocation.model_copy(update={"local_worker_id": uuid4()})
+        report = run_fake_worker(reservation_engine, invocation)
+        assert reservations.record_execution_stopped(
+            reservation_engine,
+            invocation.reservation(),
+            invocation_id=invocation.invocation_id,
+            exit_code=0,
+            local_worker_pid=os.getpid(),
+            local_worker_id=invocation.local_worker_id,
+        )
+        return report
 
     result = dispatch_once(
         reservation_engine,
@@ -177,6 +191,8 @@ def test_worker_permission_denial_does_not_record_contact_or_release_capacity(
     assert attempt.invocation_id is None
     assert attempt.started_at is None
     assert attempt.last_heartbeat_at is None
+    assert attempt.local_worker_pid is None
+    assert attempt.execution_stopped_at is None and attempt.execution_exit_code is None
     assert job.status == "pending"
     assert (
         dispatch_once(reservation_engine, adapter, dispatcher_id=uuid4()).status
@@ -201,6 +217,8 @@ def test_lost_report_after_worker_contact_preserves_running_attempt_and_never_re
     assert result.status == "submission_unresolved"
     attempt, job = attempt_state(reservation_engine, queued_job)
     assert attempt.invocation_id == result.invocation_id
+    assert attempt.execution_stopped_at >= attempt.last_heartbeat_at
+    assert attempt.execution_exit_code == 0
     assert attempt.phase == "running" and attempt.last_heartbeat_at is not None
     assert job.status == "processing"
     assert (
@@ -220,7 +238,7 @@ def test_spawn_failure_preserves_submission_intent_and_never_retries(
     monkeypatch,
 ):
     launch = Mock(side_effect=OSError("process could not start"))
-    monkeypatch.setattr(execution.subprocess, "run", launch)
+    monkeypatch.setattr(execution.subprocess, "Popen", launch)
     adapter = LocalFakeWorkerAdapter(reservation_engine)
     result = dispatch_once(reservation_engine, adapter, dispatcher_id=uuid4())
     assert result.status == "submission_unresolved"
@@ -240,7 +258,7 @@ def test_timeout_kills_and_waits_for_direct_child_but_does_not_publish_or_free_s
     monkeypatch,
     tmp_path,
 ):
-    run = subprocess.run
+    popen = subprocess.Popen
     marker = tmp_path / "worker.pid"
     stalled_worker = """
 import os
@@ -257,9 +275,9 @@ time.sleep(30)
 """
 
     def stall(command, **kwargs):
-        return run([sys.executable, "-c", stalled_worker, str(marker)], **kwargs)
+        return popen([sys.executable, "-c", stalled_worker, str(marker)], **kwargs)
 
-    monkeypatch.setattr(execution.subprocess, "run", stall)
+    monkeypatch.setattr(execution.subprocess, "Popen", stall)
     result = dispatch_once(
         reservation_engine,
         LocalFakeWorkerAdapter(reservation_engine, timeout_seconds=3),
@@ -272,6 +290,8 @@ time.sleep(30)
     attempt, job = attempt_state(reservation_engine, queued_job)
     assert attempt.phase == "running" and attempt.last_heartbeat_at is not None
     assert attempt.finished_at is None and job.status == "processing"
+    assert attempt.execution_stopped_at >= attempt.last_heartbeat_at
+    assert attempt.execution_exit_code == -9
     identity = ResultIdentity(
         job_id=result.job_id,
         attempt_id=result.attempt_id,
@@ -491,7 +511,8 @@ def test_publication_commit_failure_keeps_bundle_and_slot_and_retry_does_not_lau
     def fail_publication_commit(connection):
         nonlocal commits
         commits += 1
-        if commits == 3:
+        # Reservation, submission intent, and stop evidence precede publication.
+        if commits == 4:
             raise RuntimeError("publication commit failed")
 
     event.listen(reservation_engine, "commit", fail_publication_commit)
@@ -507,6 +528,8 @@ def test_publication_commit_failure_keeps_bundle_and_slot_and_retry_does_not_lau
     attempt, job = attempt_state(reservation_engine, queued_job)
     assert attempt.phase == "running" and attempt.finished_at is None
     assert attempt.result_manifest_key is None and job.status == "processing"
+    assert attempt.execution_stopped_at >= attempt.last_heartbeat_at
+    assert attempt.execution_exit_code == 0
     with Session(reservation_engine) as session:
         assert session.scalar(select(func.count()).select_from(JobOutput)) == 0
     no_launch = Mock()
@@ -574,3 +597,79 @@ def test_result_change_before_publication_does_not_complete_or_release_attempt(
         == "idle"
     )
     no_launch.submit.assert_not_called()
+
+
+def test_stop_commit_failure_keeps_files_but_prevents_publication_and_new_execution(
+    reservation_engine, queued_job
+):
+    adapter = LocalFakeWorkerAdapter(reservation_engine)
+    commits = 0
+
+    def fail_stop_commit(connection):
+        nonlocal commits
+        commits += 1
+        if commits == 3:
+            raise RuntimeError("stop evidence commit failed")
+
+    event.listen(reservation_engine, "commit", fail_stop_commit)
+    try:
+        result = dispatch_once(reservation_engine, adapter, dispatcher_id=uuid4())
+    finally:
+        event.remove(reservation_engine, "commit", fail_stop_commit)
+    assert result.status == "submission_unresolved"
+    attempt, job = attempt_state(reservation_engine, queued_job)
+    assert attempt.phase == "running" and job.status == "processing"
+    assert attempt.execution_stopped_at is None and attempt.execution_exit_code is None
+    identity = ResultIdentity(
+        job_id=result.job_id,
+        attempt_id=result.attempt_id,
+        invocation_id=result.invocation_id,
+    )
+    assert len(adapter.results.verify_bundle(identity).outputs) == 7
+    with Session(reservation_engine) as session:
+        assert session.scalar(select(func.count()).select_from(JobOutput)) == 0
+    no_launch = Mock()
+    assert (
+        dispatch_once(reservation_engine, no_launch, dispatcher_id=uuid4()).status
+        == "idle"
+    )
+    no_launch.submit.assert_not_called()
+
+
+def test_invalid_report_after_actual_exit_preserves_independent_stop_evidence(
+    reservation_engine, queued_job, monkeypatch
+):
+    popen = subprocess.Popen
+
+    def corrupt_report(command, **kwargs):
+        process = popen(command, **kwargs)
+        communicate = process.communicate
+
+        def finish_then_corrupt(**arguments):
+            result = communicate(**arguments)
+            output = kwargs["stdout"]
+            output.seek(0)
+            output.truncate()
+            output.write(b"invalid report")
+            output.flush()
+            return result
+
+        process.communicate = finish_then_corrupt
+        return process
+
+    monkeypatch.setattr(execution.subprocess, "Popen", corrupt_report)
+    result = dispatch_once(
+        reservation_engine,
+        LocalFakeWorkerAdapter(reservation_engine),
+        dispatcher_id=uuid4(),
+    )
+    assert result.status == "submission_unresolved"
+    attempt, job = attempt_state(reservation_engine, queued_job)
+    assert attempt.local_worker_pid is not None
+    assert (
+        attempt.execution_stopped_at >= attempt.last_heartbeat_at
+        and attempt.execution_exit_code == 0
+    )
+    assert attempt.phase == "running" and job.status == "processing"
+    with Session(reservation_engine) as session:
+        assert session.scalar(select(func.count()).select_from(JobOutput)) == 0

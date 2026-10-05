@@ -288,3 +288,20 @@ and replayed the original submission key to retrieve the completed job.
 The full locked suite passed 918 tests as UID 10001. Verification resources were
 removed using their run-specific labels. For an existing database, stop control
 processes and apply `python -m alembic upgrade head` before using this dispatcher.
+
+
+### Durable controller exit evidence verification (2026-10-05)
+
+The isojam-api:stop-evidence-check image passed the isolated queued smoke with
+--dispatch-fake-worker. A fresh container verified the authorized local launch
+UUID/PID, actual exit code zero, and start/heartbeat/stop/finish chronology alongside
+the selected manifest and all seven outputs. The restarted API served every owned
+WAV with its exact published SHA-256; a second dispatch cycle remained idle.
+
+All 1,013 tests passed on the host and in a separate disposable test container
+with locked CPU dependencies as UID 10001. Lint/format passed across 84 maintained
+Python files. Verification containers/volumes were removed, while the existing
+isojam-exercise-data volume remained present. This verifies local fake execution,
+not remote GPU termination or automatic restart reconciliation. For existing data,
+stop API/control/worker processes and apply python -m alembic upgrade head before
+using the new code; migration does not invent exit evidence for historical rows.

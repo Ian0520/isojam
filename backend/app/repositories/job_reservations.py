@@ -307,6 +307,8 @@ def authorize_execution(
     reservation: JobReservation,
     *,
     invocation_id: UUID,
+    local_worker_pid: int | None = None,
+    local_worker_id: UUID | None = None,
     busy_timeout_ms: int = 1000,
 ) -> bool:
     """Commit permission for one fresh invocation to execute the current attempt.
@@ -321,10 +323,12 @@ def authorize_execution(
     is denied, commit fails, or its acknowledgement is lost. An already persisted
     invocation holds capacity even after its authorization deadline; expiry is
     neither cancellation nor proof of worker termination. No inference belongs
-    inside this short transaction.
+    inside this short transaction. A local child supplies its PID and the fresh
+    per-launch UUID from its controller, binding that child to the invocation.
     """
     _validate_reservation(reservation)
     _validate_invocation_id(invocation_id)
+    _validate_local_worker(local_worker_pid, local_worker_id)
     with _reservation_transaction(engine, busy_timeout_ms) as connection:
         now = _utc_now()
         # Refuse reusing an invocation on another attempt. The unique constraint
@@ -336,6 +340,12 @@ def authorize_execution(
             is not None
         ):
             return False
+        values = dict(
+            phase="running", invocation_id=invocation_id, started_at=now, updated_at=now
+        )
+        if local_worker_pid is not None:
+            values["local_worker_pid"] = local_worker_pid
+            values["local_worker_id"] = local_worker_id
         changed = connection.scalar(
             update(JobAttempt)
             .where(
@@ -351,12 +361,7 @@ def authorize_execution(
                 JobAttempt.execution_authorization_expires_at > now,
                 _current_queued_attempt("pending"),
             )
-            .values(
-                phase="running",
-                invocation_id=invocation_id,
-                started_at=now,
-                updated_at=now,
-            )
+            .values(**values)
             .returning(JobAttempt.id)
         )
         if changed is None:
@@ -376,6 +381,21 @@ def authorize_execution(
                 "Execution authorization could not update its pending job"
             )
         return True
+
+
+def _validate_local_worker(
+    local_worker_pid: int | None, local_worker_id: UUID | None
+) -> None:
+    if local_worker_pid is not None and (
+        type(local_worker_pid) is not int or local_worker_pid < 1
+    ):
+        raise ValueError("local_worker_pid must be a positive integer")
+    if (local_worker_pid is None) != (local_worker_id is None):
+        raise ValueError(
+            "local_worker_pid and local_worker_id must be provided together"
+        )
+    if local_worker_id is not None and not isinstance(local_worker_id, UUID):
+        raise ValueError("local_worker_id must be a UUID")
 
 
 def _validate_invocation_id(invocation_id: UUID) -> None:
@@ -421,6 +441,7 @@ def record_heartbeat(
                 JobAttempt.started_at.is_not(None),
                 JobAttempt.finished_at.is_(None),
                 JobAttempt.phase == "running",
+                JobAttempt.execution_stopped_at.is_(None),
                 _current_queued_attempt("processing"),
             )
             .values(
@@ -438,6 +459,97 @@ def record_heartbeat(
         return changed is not None
 
 
+def record_execution_stopped(
+    engine: Engine,
+    reservation: JobReservation,
+    *,
+    invocation_id: UUID,
+    exit_code: int,
+    local_worker_pid: int | None = None,
+    local_worker_id: UUID | None = None,
+    busy_timeout_ms: int = 1000,
+) -> bool:
+    """Persist trusted controller evidence after waiting for this execution to end.
+
+    This is not a worker self-report or a timeout/heartbeat inference. The caller
+    must have confirmed termination of the exact invocation. A local controller
+    passes its actual child PID and fresh per-launch UUID. Both must match the
+    identity saved at authorization, even across reused or namespaced PIDs.
+    PID alone is never inspected later or treated as a globally unique identity.
+    Exit status is diagnostic (POSIX exit or negative signal), not proof of
+    a usable bundle.
+    Recording it neither completes the job nor releases its slot.
+
+    Current authority is checked under the write lock. An identical report is
+    acknowledged without rewriting timestamps, including after publication;
+    conflicting/stale reports return False. Failed commits raise and must not
+    be treated as durable proof. Migration never invents this evidence.
+    """
+    _validate_reservation(reservation)
+    _validate_invocation_id(invocation_id)
+    _validate_local_worker(local_worker_pid, local_worker_id)
+    if type(exit_code) is not int or not -255 <= exit_code <= 255:
+        raise ValueError("exit_code must be an integer from -255 to 255")
+    with _reservation_transaction(engine, busy_timeout_ms) as connection:
+        attempt = (
+            connection.execute(
+                select(JobAttempt.__table__).where(
+                    JobAttempt.id == reservation.attempt_id,
+                    JobAttempt.job_id == reservation.job_id,
+                    JobAttempt.attempt_number == reservation.attempt_number,
+                    JobAttempt.dispatcher_id == reservation.dispatcher_id,
+                    JobAttempt.dispatcher_generation
+                    == reservation.dispatcher_generation,
+                    JobAttempt.invocation_id == invocation_id,
+                    JobAttempt.started_at.is_not(None),
+                    or_(
+                        and_(
+                            JobAttempt.phase == "running",
+                            JobAttempt.finished_at.is_(None),
+                            _current_queued_attempt("processing"),
+                        ),
+                        and_(
+                            JobAttempt.phase == "succeeded",
+                            JobAttempt.finished_at.is_not(None),
+                            _current_queued_attempt("completed"),
+                        ),
+                    ),
+                )
+            )
+            .mappings()
+            .one_or_none()
+        )
+        if attempt is None:
+            return False
+        if (attempt["local_worker_pid"], attempt["local_worker_id"]) != (
+            local_worker_pid,
+            local_worker_id,
+        ):
+            # A denied duplicate child is not the original authorized execution.
+            return False
+        if attempt["execution_stopped_at"] is not None:
+            return attempt["execution_exit_code"] == exit_code
+        if attempt["phase"] != "running":
+            # Legacy completed rows cannot acquire retrospectively invented proof.
+            return False
+        now = _utc_now()
+        stopped = max(
+            now,
+            attempt["started_at"],
+            attempt["last_heartbeat_at"] or attempt["started_at"],
+        )
+        connection.execute(
+            update(JobAttempt)
+            .where(JobAttempt.id == reservation.attempt_id)
+            .values(
+                execution_stopped_at=stopped,
+                execution_exit_code=exit_code,
+                updated_at=max(stopped, attempt["updated_at"]),
+            )
+        )
+        return True
+
+
 class PublicationConflictError(ValueError):
     """Existing database publication cannot be replaced or silently repaired."""
 
@@ -452,9 +564,10 @@ def publish_verified_result(
 ) -> bool:
     """Commit output rows, selected manifest and completion as one unit.
 
-    Trusted callers must verify storage and establish that execution has ended
-    before entering this operation. No file read or worker call belongs inside
-    its transaction. Identity/owner/generation/latest attempt are rechecked here.
+    Trusted callers must verify storage before entering this operation. First
+    publication requires durable controller-confirmed stop evidence. No file read
+    or worker call belongs inside its transaction. Identity, owner/generation and
+    latest attempt are rechecked here.
     Deadline expiry does not undo an execution already authorized to run.
 
     True acknowledges initial or identical existing publication after commit.
@@ -493,6 +606,7 @@ def publish_verified_result(
                         and_(
                             JobAttempt.phase == "running",
                             JobAttempt.finished_at.is_(None),
+                            JobAttempt.execution_stopped_at.is_not(None),
                             _current_queued_attempt("processing"),
                         ),
                         and_(
@@ -539,6 +653,7 @@ def publish_verified_result(
             now,
             attempt["started_at"],
             attempt["last_heartbeat_at"] or attempt["started_at"],
+            attempt["execution_stopped_at"],
         )
         connection.execute(
             insert(JobOutput),

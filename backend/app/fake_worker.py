@@ -6,6 +6,7 @@ import sys
 import wave
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from uuid import uuid4
 
 from pydantic import ValidationError
 from sqlalchemy import Engine
@@ -46,6 +47,8 @@ def run_fake_worker(
         engine,
         token,
         invocation_id=invocation.invocation_id,
+        local_worker_pid=os.getpid(),
+        local_worker_id=invocation.local_worker_id or uuid4(),
     ):
         status = "permission_denied"
     elif reservations.record_heartbeat(

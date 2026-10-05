@@ -254,8 +254,9 @@ or loads the inference model. The local adapter uses the shared SQLite file on
 the same host; it is not remote GPU control.
 
 The dispatcher prints one JSON report. `completed` includes a `manifest_key` and
-means the local worker exited successfully, the fake bundle passed verification,
-and its output records and completion committed together.
+means the local worker exited successfully, the controller committed its stop
+evidence, the fake bundle passed verification, and its output records and
+completion committed together.
 The manifest records its job/attempt/invocation identity, fake processing profile,
 complete stem set, canonical storage keys, byte sizes, and SHA-256 hashes. Files
 are installed without replacement; the manifest is installed last. Missing,
@@ -266,7 +267,14 @@ inside a short SQLite transaction. All seven output rows, the selected manifest
 key/hash, the succeeded attempt and completed job commit together. The owner can
 then download the dummy WAVs through the existing output routes. Identical repeated
 publication acknowledges the saved result without rewriting rows or timestamps.
-The worker's `result_ready` report alone cannot complete a job.
+The worker's `result_ready` report alone cannot complete a job. First publication
+also requires durable controller-confirmed `execution_stopped_at` and the actual
+`execution_exit_code`. The local worker saves its launch UUID and PID when
+receiving permission; the controller must wait for that exact child and match
+both with the current job/attempt/invocation and dispatcher authority. A denied duplicate child cannot
+prove the original execution stopped. Exit status is diagnostic; only verification
+establishes that a complete usable bundle exists. Heartbeats stop being accepted
+after confirmed exit.
 
 `idle` means no eligible work or occupied capacity. Successful publication releases
 the global slot for another pending queued job. With no pending jobs, a second
@@ -278,9 +286,14 @@ Launch/report errors print `submission_unresolved` and preserve existing attempt
 state. Failed publication leaves the files available and the attempt occupied;
 `publication_unresolved`, `publication_denied`, `publication_conflict` and
 `result_invalid` never authorize another execution. A database lock wait returns
-`database_busy` (exit 75). Publication can be retried separately after execution
-has ended; simply running another dispatch cycle does not reconcile an occupied
-attempt. There is no automatic resubmission, timeout-based release,
+`database_busy` (exit 75). Publication can be retried separately once durable
+stop proof and a verified bundle are available; simply running another dispatch
+cycle does not reconcile an occupied attempt. A timeout kills and waits for the direct fake child, records confirmed
+exit when it matches the authorized process, and retains the occupied attempt.
+A crash before committing that proof leaves termination unknown, even if files
+exist. Migrating older rows never invents exit proof. Existing identical completed
+publications remain acknowledgeable without adding historical stop evidence.
+There is no automatic resubmission, timeout-based release,
 expired-reservation scanner or polling loop yet. CLI defaults are 60 seconds for
 pre-submission ownership, 300 for receiving execution permission, 30 for the local
 fake-child wait, and 1000 milliseconds for each SQLite lock wait. The child timeout

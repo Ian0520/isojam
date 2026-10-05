@@ -1,5 +1,6 @@
 import json
 import multiprocessing
+import os
 from datetime import timedelta
 from pathlib import Path
 from uuid import uuid4
@@ -19,13 +20,31 @@ from app.results import LocalResultStore, ResultValidationError
 
 
 @pytest.fixture
-def ready_result(reservation_engine, owned_reservation, tmp_path):
+def ready_unstopped_result(reservation_engine, owned_reservation, tmp_path):
     assert reservations.begin_submission(reservation_engine, owned_reservation)
-    invocation = WorkerInvocation.from_reservation(owned_reservation, uuid4())
+    invocation = WorkerInvocation.from_reservation(
+        owned_reservation, uuid4()
+    ).model_copy(update={"local_worker_id": uuid4()})
     store = LocalResultStore(tmp_path / "audio" / "results")
     assert (
         run_fake_worker(reservation_engine, invocation, result_store=store).status
         == "result_ready"
+    )
+    return invocation, store
+
+
+@pytest.fixture
+def ready_result(reservation_engine, ready_unstopped_result):
+    invocation, store = ready_unstopped_result
+    # Simulate the trusted controller's observation after this in-process test
+    # execution returned. Production records this only after an OS-confirmed exit.
+    assert reservations.record_execution_stopped(
+        reservation_engine,
+        invocation.reservation(),
+        invocation_id=invocation.invocation_id,
+        exit_code=0,
+        local_worker_pid=os.getpid(),
+        local_worker_id=invocation.local_worker_id,
     )
     return invocation, store
 
@@ -148,8 +167,12 @@ def test_stale_or_ineligible_database_state_rejects_publication(
             attempt.reservation_expires_at = None
             attempt.execution_authorization_expires_at = None
             attempt.invocation_id = None
+            attempt.local_worker_pid = None
+            attempt.local_worker_id = None
             attempt.started_at = None
             attempt.last_heartbeat_at = None
+            attempt.execution_stopped_at = None
+            attempt.execution_exit_code = None
         session.commit()
     before = snapshot(reservation_engine, owned_reservation)
     assert not publish(reservation_engine, invocation, store)
@@ -330,14 +353,22 @@ def test_real_commit_contention_cleans_up_driver_transaction_and_retry_succeeds(
 
 
 def test_completion_timestamp_does_not_regress_after_clock_moves_backwards(
-    reservation_engine, owned_reservation, ready_result, clock
+    reservation_engine, owned_reservation, ready_unstopped_result, clock
 ):
-    invocation, store = ready_result
+    invocation, store = ready_unstopped_result
     clock.now += timedelta(seconds=30)
     assert reservations.record_heartbeat(
         reservation_engine, owned_reservation, invocation_id=invocation.invocation_id
     )
     heartbeat = clock.now
+    assert reservations.record_execution_stopped(
+        reservation_engine,
+        invocation.reservation(),
+        invocation_id=invocation.invocation_id,
+        exit_code=0,
+        local_worker_pid=os.getpid(),
+        local_worker_id=invocation.local_worker_id,
+    )
     clock.now -= timedelta(seconds=60)
     assert publish(reservation_engine, invocation, store)
     assert (
@@ -479,7 +510,12 @@ def test_schema_rejects_incomplete_or_invalid_publication_metadata(
             attempt.finished_at = None
         else:
             attempt.finished_at = attempt.started_at - timedelta(seconds=1)
-        with pytest.raises(IntegrityError, match="ck_job_attempts_result_publication"):
+        constraint = (
+            "ck_job_attempts_(result_publication|execution_stopped)"
+            if damage == "clock_order"
+            else "ck_job_attempts_result_publication"
+        )
+        with pytest.raises(IntegrityError, match=constraint):
             session.commit()
 
 
@@ -517,3 +553,40 @@ def test_readers_cannot_see_output_rows_before_the_completion_transaction_commit
     finally:
         event.remove(reservation_engine, "after_cursor_execute", inspect_after_insert)
         observed.dispose()
+
+
+@pytest.mark.parametrize("exit_code", [0, 1, -9])
+def test_verified_bundle_and_confirmed_stop_are_independent_requirements(
+    reservation_engine, owned_reservation, ready_unstopped_result, clock, exit_code
+):
+    invocation, store = ready_unstopped_result
+    bundle = store.verify_bundle(invocation.result_identity())
+    # Neither a complete manifest nor expired authorization/old heartbeat proves exit.
+    clock.now += timedelta(days=1)
+    before = snapshot(reservation_engine, owned_reservation)
+    assert not publish(reservation_engine, invocation, store)
+    assert snapshot(reservation_engine, owned_reservation) == before
+    assert reservations.record_execution_stopped(
+        reservation_engine,
+        invocation.reservation(),
+        invocation_id=invocation.invocation_id,
+        exit_code=exit_code,
+        local_worker_pid=os.getpid(),
+        local_worker_id=invocation.local_worker_id,
+    )
+    # Exit status is diagnostic; a verified complete bundle establishes usability.
+    assert publish(reservation_engine, invocation, store)
+    attempt, job, outputs = snapshot(reservation_engine, owned_reservation)
+    assert attempt["finished_at"] >= attempt["execution_stopped_at"]
+    assert job["status"] == "completed" and len(outputs) == len(bundle.outputs)
+    before = snapshot(reservation_engine, owned_reservation)
+    clock.now += timedelta(days=1)
+    assert reservations.record_execution_stopped(
+        reservation_engine,
+        invocation.reservation(),
+        invocation_id=invocation.invocation_id,
+        exit_code=exit_code,
+        local_worker_pid=os.getpid(),
+        local_worker_id=invocation.local_worker_id,
+    )
+    assert snapshot(reservation_engine, owned_reservation) == before

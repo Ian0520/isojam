@@ -993,3 +993,93 @@ the completed job. All migrations used disposable databases/volumes.
 The planned local queued-execution feature branch is ready for a user-opened PR
 before the next feature. Real GPU inference, automatic reconciliation, private
 remote storage/control and hosted deployment remain separate milestones.
+
+
+### Implemented slice: durable controller-confirmed exit (Stage 4A)
+
+The `feat/worker-recovery` branch first persists termination evidence; a subsequent
+slice will use it for restart reconciliation. This stage does not scan, take over,
+resubmit, retire or automatically publish occupied attempts.
+
+Migration `b5d8f3027a91` adds nullable local_worker_id/local_worker_pid,
+execution_stopped_at and execution_exit_code. Existing rows remain NULL, including completed publications;
+a schema upgrade cannot establish that an old process stopped. Downgrade removes
+these four columns and their constraints, preserving outputs, selected manifests
+and other history. Stop controllers/workers before upgrading or downgrading.
+
+The controller creates a fresh UUID for each local launch, including repeated
+delivery. The fake child saves that UUID and os.getpid() in the same authorization
+transaction as the invocation and processing state. LocalFakeWorkerAdapter now uses Popen so it can
+retain the child handle and actual return code after normal exit or timeout cleanup.
+It sends the bounded invocation through stdin, waits with communicate(), and on
+timeout kills then waits for the direct child. It persists stop evidence before
+parsing the report, so a malformed/lost report cannot erase independently confirmed
+exit. It does not inspect an arbitrary saved PID after restart: PID reuse and host
+namespaces make that insufficient. The fake child has no descendants; this is not
+a general GPU process-tree cancellation or asynchronous provider contract.
+
+record_execution_stopped is a trusted controller operation, never a worker
+self-report. Under BEGIN IMMEDIATE it checks the current queued job, latest attempt,
+attempt number, owner/generation and authorized invocation. A local controller
+also supplies the fresh launch UUID and PID from its waited-for child handle;
+both must match the identity saved by the child that received permission.
+The UUID prevents PID reuse or container PID namespaces from matching a different
+delivery, even when its PID is identical. This matters on duplicate
+delivery: a second denied child's exit cannot stand in for the original execution.
+A generic future controller must independently establish termination of its exact
+provider execution before using the repository operation. No remote wrapper exists.
+
+UTC stop time is sampled after acquiring the lock and cannot precede start or last
+heartbeat. The schema requires a complete stop/exit-code pair, an authorized start,
+an integer POSIX exit code or negative signal in [-255, 255], and finish time no
+earlier than confirmed stop. Identical reports acknowledge without rewriting;
+different exit codes and stale identities are refused. A failed commit is not a
+durable acknowledgement. Recording exit keeps running/processing and the slot;
+heartbeats after confirmed stop are refused. It never grants execution permission.
+
+First publication now requires persisted stop evidence in addition to independent
+bundle verification. Final timestamps include the stop time even on clock rollback.
+An already completed identical publication remains acknowledgeable after migration,
+including downgrade followed by re-upgrade; it creates no new result and invents no historical
+proof. A completed legacy row cannot retroactively acquire new stop evidence.
+
+| Evidence | What it establishes |
+| --- | --- |
+| Authorization | This invocation may start once |
+| Heartbeat | The authorized invocation made contact |
+| Verified bundle | All required files exist and pass validation |
+| Controller-confirmed exit | The exact authorized execution ended |
+| Publication commit | All outputs and public completion became visible atomically |
+
+Exit zero alone does not establish a valid bundle. A nonzero or killed execution
+can leave a valid completed bundle before losing its report; exit status is
+stored for diagnosis, while bundle verification determines usability. Normal
+adapter success still requires a matching result_ready report and exit zero.
+Timeouts and report/publication failures preserve the occupied attempt; there is
+no automatic recovery yet. A crash after exit but before proof commit remains
+unknown and must not authorize a replacement from heartbeat age, expired start
+permission or manifest presence. Reconciliation of saved proof follows in 4B.
+
+Tests cover model-created/migrated schemas, exact controller/child identity,
+denied duplicate delivery, actual timeout kill/wait, invalid reports after exit,
+failed stop/publication commits, unchanged duplicate evidence, schema chronology,
+clock rollback, expired permission, independent bundle/exit requirements, and
+upgrade/downgrade/re-upgrade preserving completed publications and file bytes.
+
+General lesson: evidence must identify the event it proves. Waiting for a process
+proves that process ended, not that a different execution with the same delivered
+request ended. Persist confirmed facts separately from decisions so a restart
+can recover a decision without repeating expensive computation.
+
+
+Stage verification: 1,013 tests passed on the host and 1,013 with locked CPU
+runtime dependencies as UID 10001 (Python 3.12.14, SQLAlchemy 2.1.1, Alembic 1.20.0).
+All 84 maintained Python files passed Ruff lint/format checks. The rebuilt
+isojam-api:stop-evidence-check image passed the isolated queued container smoke:
+a fresh container observed saved launch UUID/PID, stop/exit evidence, selected
+manifest and seven output rows, and the restarted API served exact published WAV
+hashes. Smoke/test containers and the smoke volume were removed; the Docker
+exercise volume remained present. Every migration check used disposable storage.
+
+Stage 4A is committed separately on feat/worker-recovery. Restart reconciliation
+will follow on this same feature branch before the user-opened pull request.

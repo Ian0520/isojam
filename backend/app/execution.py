@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 from tempfile import TemporaryFile
 from typing import Annotated, Literal, Protocol
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from pydantic import (
     AwareDatetime,
@@ -19,7 +19,11 @@ from pydantic import (
 from sqlalchemy import Engine
 
 from app.config import get_audio_storage_dir
-from app.repositories.job_reservations import JobReservation
+from app.repositories.job_reservations import (
+    JobReservation,
+    ReservationBusyError,
+    record_execution_stopped,
+)
 from app.results import LocalResultStore, ResultIdentity, ResultValidationError
 
 MAX_CONTROL_MESSAGE_BYTES = 4096
@@ -44,6 +48,7 @@ class WorkerInvocation(BaseModel):
     dispatcher_generation: PositiveInt
     reservation_expires_at: AwareDatetime
     invocation_id: UUID
+    local_worker_id: UUID | None = None
 
     @classmethod
     def from_reservation(cls, reservation: JobReservation, invocation_id: UUID):
@@ -99,7 +104,7 @@ class WorkerLaunchError(RuntimeError):
 
 
 class ExecutionAdapter(Protocol):
-    """Trusted synchronous delivery: return only after execution has ended.
+    """Trusted synchronous delivery: confirm and persist execution stop before success.
 
     An asynchronous provider acknowledgement cannot fulfill this local contract.
     """
@@ -114,7 +119,8 @@ class LocalFakeWorkerAdapter:
 
     This synchronous adapter is a local contract exercise. It is not a GPU
     provider submit/inspect/cancel adapter. It neither retries nor retires work.
-    The child has no descendants; run() kills and waits for it on timeout.
+    The child has no descendants; timeout cleanup kills and waits for it.
+    Confirmed exit is committed before parsing its report, independently of success.
     """
 
     def __init__(self, engine: Engine, *, timeout_seconds: int = 30):
@@ -133,6 +139,7 @@ class LocalFakeWorkerAdapter:
         path = Path(database)
         if not path.is_absolute():
             raise ValueError("Local fake execution requires an absolute database path")
+        self.engine = engine
         self.database_path = path.resolve()
         self.timeout_seconds = timeout_seconds
         self.audio_storage_dir = get_audio_storage_dir()
@@ -144,24 +151,56 @@ class LocalFakeWorkerAdapter:
         worker_env["ISOJAM_AUDIO_STORAGE_DIR"] = str(self.audio_storage_dir)
         # Worker coordination does not use the user's login signing secret.
         worker_env.pop("ISOJAM_JWT_SECRET_KEY", None)
-        payload = invocation.model_dump_json().encode("utf-8")
+        # Fresh per launch, even if a caller repeats an invocation. PID namespaces
+        # and PID reuse cannot make a different delivery the authorized child.
+        local_worker_id = uuid4()
+        delivery = invocation.model_copy(update={"local_worker_id": local_worker_id})
+        payload = delivery.model_dump_json().encode("utf-8")
         if len(payload) > MAX_CONTROL_MESSAGE_BYTES:
             raise WorkerLaunchError("Local invocation exceeds the message limit")
         with TemporaryFile() as output:
             try:
-                result = subprocess.run(
+                timed_out = False
+                with subprocess.Popen(
                     [sys.executable, "-m", "app.fake_worker"],
-                    input=payload,
+                    stdin=subprocess.PIPE,
                     stdout=output,
                     stderr=subprocess.DEVNULL,
                     env=worker_env,
-                    timeout=self.timeout_seconds,
-                    check=False,
-                )
-            except (OSError, subprocess.TimeoutExpired) as error:
+                ) as result:
+                    try:
+                        result.communicate(input=payload, timeout=self.timeout_seconds)
+                    except subprocess.TimeoutExpired:
+                        result.kill()
+                        result.communicate()
+                        timed_out = True
+                    except BaseException:
+                        # Do not leave the direct child alive on an interrupted send.
+                        # No stop proof is invented if cleanup or persistence fails.
+                        result.kill()
+                        result.wait()
+                        raise
+            except OSError as error:
                 raise WorkerLaunchError(
                     "Local fake worker launch/report is unresolved"
                 ) from error
+            try:
+                stopped = record_execution_stopped(
+                    self.engine,
+                    invocation.reservation(),
+                    invocation_id=invocation.invocation_id,
+                    exit_code=result.returncode,
+                    local_worker_pid=result.pid,
+                    local_worker_id=local_worker_id,
+                )
+            except ReservationBusyError:
+                raise
+            except Exception as error:
+                raise WorkerLaunchError(
+                    "Local worker ended but its stop evidence could not be committed"
+                ) from error
+            if timed_out:
+                raise WorkerLaunchError("Local fake worker timed out; execution ended")
             output.seek(0)
             raw = output.read(MAX_CONTROL_MESSAGE_BYTES + 1)
         if len(raw) > MAX_CONTROL_MESSAGE_BYTES:
@@ -178,7 +217,10 @@ class LocalFakeWorkerAdapter:
             invocation.job_id,
             invocation.attempt_id,
             invocation.invocation_id,
-        ) or result.returncode != WORKER_EXIT_CODES[report.status]:
+        ) or (
+            result.returncode != WORKER_EXIT_CODES[report.status]
+            or report.worker_pid != result.pid
+        ):
             raise WorkerLaunchError(
                 "Local fake worker report does not match its invocation"
             )
@@ -194,4 +236,8 @@ class LocalFakeWorkerAdapter:
                 raise WorkerLaunchError(
                     "Worker result bundle could not be verified"
                 ) from error
+            if not stopped:
+                raise WorkerLaunchError(
+                    "Worker stop evidence does not match its invocation"
+                )
         return report
