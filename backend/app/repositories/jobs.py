@@ -42,6 +42,7 @@ def create_job_with_limit(
     *,
     max_unfinished_jobs: int,
     submission_key: str | None = None,
+    execution_backend: str = "local",
 ) -> Job | None:
     """Atomically admit a job under the user's allowance on SQLite.
 
@@ -51,6 +52,8 @@ def create_job_with_limit(
     simultaneous submissions converge without a count-then-insert race.
     Revisit locking/isolation if the database backend changes.
     """
+    if execution_backend not in {"local", "queued"}:
+        raise ValueError("execution_backend must be local or queued")
     unfinished_count = (
         select(func.count())
         .select_from(Job)
@@ -60,7 +63,10 @@ def create_job_with_limit(
         .scalar_subquery()
     )
     candidate = select(
-        literal(uuid4(), type_=Job.id.type), Upload.id, literal("pending")
+        literal(uuid4(), type_=Job.id.type),
+        Upload.id,
+        literal("pending"),
+        literal(execution_backend),
     ).where(
         Upload.id == upload_id,
         Upload.user_id == user_id,
@@ -77,6 +83,8 @@ def create_job_with_limit(
         )
         candidate = candidate.where(~receipt_exists)
     statement = (
-        insert(Job).from_select(["id", "upload_id", "status"], candidate).returning(Job)
+        insert(Job)
+        .from_select(["id", "upload_id", "status", "execution_backend"], candidate)
+        .returning(Job)
     )
     return session.scalars(statement).one_or_none()

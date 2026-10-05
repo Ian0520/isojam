@@ -14,26 +14,32 @@ from app.main import create_app
 from tests.factories import create_test_job
 
 
-def test_disabled_processing_skips_model_factory_and_serves_health(jwt_secret_key):
+@pytest.mark.parametrize("mode", ["disabled", "queued"])
+def test_nonlocal_processing_skips_model_factory_and_serves_health(
+    jwt_secret_key, mode
+):
     model_factory = Mock(
-        side_effect=AssertionError("Disabled processing must not load a model")
+        side_effect=AssertionError("Nonlocal processing must not load a model")
     )
     app = create_app(
         model_session_factory=model_factory,
         jwt_secret_key=jwt_secret_key,
-        processing_mode="disabled",
+        processing_mode=mode,
     )
     with TestClient(app) as client:
         assert app.state.model_session is None
-        assert app.state.processing_mode == "disabled"
+        assert app.state.processing_mode == mode
         assert client.get("/health").status_code == 200
     model_factory.assert_not_called()
 
 
-def test_processing_mode_can_be_selected_from_environment(jwt_secret_key, monkeypatch):
-    monkeypatch.setenv("ISOJAM_PROCESSING_MODE", "disabled")
+@pytest.mark.parametrize("mode", ["disabled", "queued"])
+def test_processing_mode_can_be_selected_from_environment(
+    jwt_secret_key, monkeypatch, mode
+):
+    monkeypatch.setenv("ISOJAM_PROCESSING_MODE", mode)
     model_factory = Mock(
-        side_effect=AssertionError("Disabled processing must not load a model")
+        side_effect=AssertionError("Nonlocal processing must not load a model")
     )
     app = create_app(model_session_factory=model_factory, jwt_secret_key=jwt_secret_key)
     with TestClient(app):
@@ -130,8 +136,9 @@ def test_disabled_processing_rejects_jobs_without_persistence_or_dispatch_and_ke
         assert client.post("/jobs", json={"upload_id": upload_id}).status_code == 401
 
 
-def test_disabled_api_runs_without_importing_inference_packages(tmp_path, monkeypatch):
-    monkeypatch.setenv("ISOJAM_PROCESSING_MODE", "disabled")
+@pytest.mark.parametrize("mode", ["disabled", "queued"])
+def test_cpu_api_runs_without_importing_inference_packages(tmp_path, monkeypatch, mode):
+    monkeypatch.setenv("ISOJAM_PROCESSING_MODE", mode)
     monkeypatch.setenv("ISOJAM_DATABASE_PATH", str(tmp_path / "metadata.db"))
     monkeypatch.setenv("ISOJAM_AUDIO_STORAGE_DIR", str(tmp_path / "audio"))
     script = """

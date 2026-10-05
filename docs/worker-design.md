@@ -654,6 +654,142 @@ no development database or exercise volume was migrated. This adds no sending
 loop, dispatcher/worker command, authenticated remote endpoint, provider
 reconciliation, automatic replacement or real GPU execution smoke.
 
+### Implemented slice: queued API acceptance (2026-10-05)
+
+This is stage one of `feat/queued-execution`. Keep this branch open for the
+related dispatcher/fake-worker and output publication stages, with tested commits
+and learning reviews between them. Queued acceptance alone is not a complete
+worker system or a ready hosted separation service.
+
+`ISOJAM_PROCESSING_MODE` and injected configuration now accept queued in addition
+to local/disabled. Both CPU modes skip model construction and inference imports;
+local remains the default and the Docker image still defaults to disabled.
+Invalid configuration fails before model loading.
+
+In queued mode, POST /jobs authenticates the user, verifies upload ownership,
+enforces the shared unfinished-job allowance, and commits a pending queued job
+with its optional submission receipt before returning the existing 200 response.
+The atomic conditional INSERT now includes the selected backend explicitly.
+The API creates no attempt and schedules no background inference for queued work.
+Pending downloads remain unavailable (409). No schema migration is required:
+the execution_backend column and its constraint already exist.
+
+Backend selection is server configuration, not a new user processing option.
+Receipt fingerprints therefore remain unchanged. Keyed replay returns the
+original job/status/backend across local, queued and disabled API replacements;
+it never converts or reschedules existing work. Concurrent retries and full-quota
+replay retain the previous atomic admission semantics. Local and queued unfinished
+jobs both count toward the same per-user allowance.
+
+A failed-commit check exposed SQLite transaction state retained on a pooled
+connection after SQLAlchemy marked its transaction inactive. Job acceptance now
+uses commit_session: retain the owned driver reference, attempt commit, and on
+failure roll back the driver before clearing session state and propagating the
+error. This prevents another request from reusing uncommitted job/receipt state.
+Tests cover an injected commit failure and an actual reader-blocked SQLite COMMIT,
+checking both a reused pool and a fresh engine, then successful keyed retry.
+
+Submission tests now run in local and queued modes against model-created and
+migrated schemas, covering authentication/ownership, quotas, key validation,
+conflicts, receipt failure and concurrent replay. Additional acceptance tests
+upload real small WAVs, shut down the accepting API, open a fresh engine/app,
+replay the request, and discover the committed job through reserve_next_job.
+The existing CPU import boundary test also covers queued mode.
+
+Validation: 742 backend tests passed on the host and in a disposable locked
+runtime (Python 3.12.14 / SQLAlchemy 2.1.1 / Alembic 1.20.0) as UID 10001. Ruff
+lint/format passed across 70 maintained Python files, excluding the two original
+generated migrations as before. The CPU image built and pip check passed. The
+real HTTP container smoke passed in both disabled and queued modes; queued mode
+preserved one pending job/receipt and exact WAV bytes through container replacement
+without another job, attempt, output or inference dependency. Disposable labeled
+containers/volumes were removed; development data and the exercise volume were
+not used. The runner is not yet implemented, so queued jobs remain pending and
+consume quota until later execution is connected. No production mode is enabled
+implicitly, and no GPU/provider/remote-host execution is claimed.
+
+### Implemented slice: one-cycle local dispatcher and fake worker (2026-10-05)
+
+This is stage two of `feat/queued-execution`, following queued API acceptance.
+The branch remains open for attempt output/publication work and learning reviews.
+No schema or dependency-lock change is needed for this slice.
+
+`python -m app.dispatcher --once --adapter local-fake` explicitly runs one cycle
+with a fresh dispatcher UUID. It reserves eligible queued work, commits submission
+intent/deadline, and only then invokes the execution adapter. No write transaction
+spans the adapter call or worker wait. Empty/occupied capacity returns idle.
+A denied submission transition or failed authority commit launches no worker.
+Both lifetimes are validated before a reservation can be persisted.
+
+The local adapter starts `python -m app.fake_worker` using the current Python
+interpreter, with a typed version-one invocation on standard input and a bounded
+report read. The invocation contains job/attempt identity, dispatcher generation,
+informational reservation expiry and a fresh invocation UUID. Strict positive
+integer fields, aware time and forbidden extra fields protect this internal
+message shape. These identifiers are not authentication credentials. The child
+receives the adapter's absolute file-backed SQLite path; in-memory, relative and
+URI-option engines are rejected. User JWT signing configuration is not passed
+to the child. This trusted same-host transport is not a remote storage/control API.
+
+The fake worker obtains execution permission before reporting one heartbeat.
+Duplicate or denied grants do not report further contact. Grant/control errors
+stop the worker; heartbeat denial produces a distinct report. Successful contact
+uses worker exit zero, denied permission exit three, and rejected contact exit
+four. The adapter validates bounded JSON, echoed identities and matching exit
+status before accepting the report. Help/argument/request validation precedes
+opening the configured database. Neither command starts the API or imports the
+inference implementation.
+
+Dispatcher worker_contact_recorded means the coordination check finished, never
+completed audio. The job remains processing, the attempt running with contact,
+and the slot occupied even after the fake child exits. Worker PID is observational
+only and is not durable authority or a reusable provider reference.
+
+A spawn failure, timeout, oversized/malformed/mismatched report, or lost report
+preserves durable submission/running evidence. A launch/report error returns
+submission_unresolved without terminal writes, capacity release or resubmission.
+The persisted phase can remain submitting when no invocation was registered, or
+running when contact committed before acknowledgement was lost. This slice does
+not introduce a persistent provider uncertainty field or reconciliation scanner.
+A future dispatcher cycle sees the occupied slot and stays idle.
+
+Defaults: reservation lifetime 60 seconds, authorization lifetime 300 seconds,
+local fake-child timeout 30 seconds (configurable 1-60), and per-operation SQLite
+busy wait 1000 milliseconds (configurable 0-30000). The two lifetimes accept 1-3600
+integer seconds. The synchronous fake transport kills and waits for its direct
+child on timeout; the child starts no descendants. Process creation itself is not
+a guaranteed interruptible wall-clock bound. This timeout is not a GPU runtime
+policy or authority to retire an attempt. CLI exits zero for idle/contact, one
+for unresolved/denied/failed operations, and 75 for database contention; argument
+errors exit two. The worker retains separate denial/contact exit codes.
+
+Tests use actual worker subprocesses and independent competing dispatcher processes,
+prove committed intent/write-lock release before launch, deny expired worker grants,
+cover failed reservation/submission commits, preserve contact after a lost report,
+and kill/wait for a direct child stalled after committed contact. API acceptance,
+API shutdown, separate dispatcher CLI and worker, fresh API status, and an idle
+second CLI cycle are exercised with real small WAV uploads. Malformed/bounded
+messages, identity/exit mismatches, repeated deliveries and no-database help/error
+boundaries are checked. All test databases/audio are disposable.
+
+This is one explicit dispatch cycle, not a supervised polling service. It does
+not scan/reclaim expired reservations, reconcile provider acceptance, retry or
+retire executions, run inference, send periodic heartbeats, publish stems, or
+serve authenticated remote worker operations. The next stage adds durable output
+evidence and guarded publication; hosted adapters remain later work.
+
+Validation: all 790 backend tests passed on the host and in a disposable locked
+container (Python 3.12.14 / SQLAlchemy 2.1.1 / Alembic 1.20.0) as UID 10001.
+The 48 new cases include real process/timeout and coordination-boundary checks.
+Ruff lint/format passed across 75 maintained Python files, retaining the original
+two generated-migration exclusions. The CPU image built and pip check passed.
+The real HTTP/container smoke accepted a queued job, replaced/stopped the API,
+ran a separate dispatcher container and its fake-worker child, observed committed
+contact/processing state, and verified an idle second dispatcher container without
+outputs. Existing WAV bytes survived replacement. Disposable test containers and
+smoke volumes were removed; no development database or exercise volume was used.
+No real GPU execution or hosted provider capability is claimed.
+
 ## 10. Review and learning checkpoints
 
 This stage is complete when the proposed flow and recovery tradeoffs have been
@@ -674,3 +810,186 @@ After the whole worker milestone, ask the user to explain in their own words:
 General lesson: persist the work, the right to execute it, and the evidence of its
 result. Design every externally visible state transition around interruption and
 repeated delivery, rather than assuming each operation happens once.
+
+
+### Implemented slice: durable local fake result bundles (2026-10-05)
+
+Stage 3A adds filesystem evidence without publishing a database result. No schema
+migration is needed. Continue on `feat/queued-execution`; a learning pause is not
+a pull-request boundary.
+
+After permission and heartbeat succeed, the local fake worker generates seven
+small deterministic PCM WAVs in a private temporary workspace. It copies them to:
+
+```text
+ISOJAM_AUDIO_STORAGE_DIR/results/
+  jobs/<job-id>/attempts/<attempt-id>/<invocation-id>/
+    vocals.wav
+    drums.wav
+    bass.wav
+    guitar.wav
+    piano.wav
+    other.wav
+    instrumental.wav
+    manifest.json
+```
+
+The processing profile is explicitly `fake-pcm16-stereo-44100hz-16frames-v1`.
+These files contain dummy samples, not separated input audio. The profile labels
+the fake generator; validation enforces the configured stem set, size/duration
+limits and the shared supported-WAV rules, not exact sample equality to a fake
+reference. Future real inference must use its own trusted expected profile.
+
+`app.results.LocalResultStore` copies one file to a private temporary name,
+validates its audio, flushes/fsyncs it and installs its final name using a
+create-only hard link. It fsyncs directory changes. The manifest is written and
+installed only after all stems are finalized. A duplicate storage write must have
+identical finalized bytes; it never replaces a conflicting artifact or manifest.
+Normal writes remove their own staging files. A killed process may leave staging
+files and partial final files; orphan cleanup is not implemented in this slice.
+
+Manifest presence is a readiness marker, not sufficient proof by itself. The
+reader checks expected job/attempt/invocation identity and profile, exactly seven
+unique expected stems, each canonical key, per-file/total sizes and SHA-256, and
+decodes each WAV in bounded blocks. Fake limits are 64 KiB per stem, 448 KiB total,
+one second of audio per stem and 16 KiB for the manifest. Metadata reads and copies
+are bounded. File metadata changes during hashing/decoding are rejected.
+
+The local POSIX store refuses symlink traversal below its trusted configured root
+using directory descriptors and no-follow opens. Nonregular artifacts, including
+FIFOs, are rejected without waiting for a writer. It never opens a path supplied
+by a manifest: it opens the fixed stem name only after its key matches the expected
+invocation location. WAV validation accepts an already-open stream so hashing and
+decoding use the same handle.
+
+The same-host adapter passes the configured audio directory to its child and
+independently verifies the worker's bundle before accepting `result_ready`.
+Dispatcher JSON uses `worker_result_ready` and includes `manifest_key`. The job
+still stays `processing`, its attempt stays `running`, and output rows/downloads
+remain unavailable. Worker-report status is not the database's result_ready phase.
+
+An interrupted writer without a manifest has no ready result. A killed worker or
+lost report after the manifest has been saved leaves verifiable evidence. Neither
+case automatically grants another execution, releases capacity or publishes a
+result. Storage replay is distinct from worker redelivery: storage can compare
+identical bytes while a repeated execution grant remains denied.
+
+The configured root and OS owner are trusted. Read-only permissions and create-only
+application writes do not make files immutable against a hostile owner/root.
+This is a local contract exercise, not remote/private object storage. Later remote
+storage needs conditional writes or immutable versions, scoped credentials and
+safe transfer. Filesystem syncing does not replace backups or guarantee behavior
+on every filesystem/hardware stack. Database publication must independently check
+current authority and atomically store output rows plus completion in the next
+stage; the filesystem cannot commit a SQLite transaction.
+
+Tests cover real writer termination after one installed stem, failure immediately
+before manifest installation, identical/conflicting storage replay, incomplete and
+forged manifests, changed/missing/invalid WAVs, path escapes/symlinks/FIFOs, bounds,
+mid-verification changes, lost worker reports and timeouts after bundle creation,
+and API shutdown followed by a separate dispatcher/worker. Container smoke checks
+the bundle from a fresh container sharing its disposable named volume.
+
+General lesson: durable file evidence and public completion are separate commits.
+Write every artifact first, record a bounded manifest last, independently verify
+it, then publish database state under current authority. Design each boundary so
+a crash leaves evidence that can be examined instead of requiring blind reruns.
+
+
+Stage verification: the full host and locked CPU-container suites each passed
+837 tests. After the final audio-root propagation regression was added, the 97
+result/worker/dispatcher cases passed again on the host and rebuilt image as UID
+10001. The container uses Python 3.12.14, SQLAlchemy 2.1.1 and Alembic 1.20.0.
+The queued HTTP/dispatcher smoke passed on `isojam-api:results-check`, including
+fresh-container verification of all seven WAVs and the manifest on its disposable
+volume. Maintained Python lint/format checks passed. Existing development and
+Docker exercise data were not migrated or removed.
+
+
+### Implemented slice: guarded atomic result publication (2026-10-05)
+
+Stage 3B completes the normal local fake-worker path on `feat/queued-execution`.
+The worker saves files and reports result_ready; the local synchronous adapter
+waits for its direct child to exit. An asynchronous provider submission receipt
+cannot fulfill this adapter contract. A complete manifest alone is not evidence
+that an execution has stopped. Lost/invalid reports and worker timeouts still hold
+capacity until a separate reconciliation decision; there is no automatic scanner.
+
+`app.publication.publish_result` verifies the expected bundle before taking a
+SQLite write lock. It then calls the trusted internal
+`job_reservations.publish_verified_result`, which owns a fresh BEGIN IMMEDIATE
+transaction and rechecks job/attempt identity, attempt number, dispatcher owner
+and generation, invocation, queued backend, latest attempt, and running/processing
+state. No file decoding, hashing, copying or worker launch occurs under that lock.
+The start-permission deadline may have expired: it limits when execution starts,
+not whether an already authorized, ended execution may publish its results.
+
+The transaction inserts all output rows with their verified absolute local paths,
+records the selected manifest key/SHA-256, marks the attempt succeeded with a
+controller-side finish time, and marks the job completed. Finish time cannot
+precede start or its last heartbeat if the control clock moves backwards; update
+timestamps never regress during publication. Only a successful commit acknowledges
+publication. The terminal attempt releases the existing single global slot.
+
+An identical repeated publication verifies storage again and checks the selected
+manifest key/hash and exact stored stem/path mapping. It acknowledges the same
+result without rewriting rows or timestamps. Stale authority is denied; a changed
+manifest or mismatched pre-existing output set raises PublicationConflictError.
+The publisher neither overwrites nor silently repairs published records. It grants
+no execution permission and never launches a worker.
+
+Migration `a4c9e7201b63` adds nullable result_manifest_key/result_manifest_sha256
+columns and a check constraint. Publication evidence must be a complete pair,
+with bounded key, lowercase 64-character hexadecimal hash, authorized invocation,
+succeeded phase and valid finish time. Existing attempts remain NULL; upgrade
+cannot invent which manifest was selected. Downgrade preserves output rows/files
+and prior attempt history but removes selected-manifest evidence. Re-upgrade does
+not reconstruct it; an existing publication without that evidence is not blindly
+acknowledged. Stop control processes before applying migrations or downgrading.
+
+Dispatcher JSON now returns completed after publication commits. A result changed
+before publication returns result_invalid; stale authority returns publication_denied;
+conflicting existing records return publication_conflict; other publication errors
+return publication_unresolved. Database contention retains the existing database_busy
+exit-75 behavior. These outcomes preserve the occupied attempt and never resubmit.
+The original job/attempt/invocation and manifest remain inspectable for a later
+publication retry or reconciliation. Automatic restart reconciliation is separate
+work; a new dispatch cycle simply sees an occupied slot.
+
+Existing authenticated GET status/download routes use the published output rows.
+The owner receives all seven fake WAVs after completion; another user receives
+404. Local-mode inference remains its separate existing processing path. This
+same-host POSIX store trusts the OS owner and its configured root. Read-only files
+and create-only application writes are not protection against a hostile OS owner;
+remote storage/serving and scoped execution credentials follow in later stages.
+
+Tests cover publication against model-created and migrated schemas, unchanged
+identical replay, wrong IDs/owner/generation/attempt number, newer attempts,
+changed authority during verification, damaged/profile-mismatched files, conflicting
+records, concurrent independent publishers, reader visibility before commit,
+rollback after output insertion, actual SQLite reader-blocked COMMIT cleanup,
+clock rollback, deadline expiry and slot release. Migration tests preserve existing
+ownership, execution/heartbeat evidence, receipts, output records and WAV bytes
+through upgrade/downgrade/re-upgrade. Dispatcher tests stop the API after acceptance,
+run separate worker/dispatcher processes, restart the API, and compare every owned
+download with the verified WAV. A publication failure can be retried without a
+second worker launch.
+
+General lesson: expensive computation, durable file persistence and public database
+completion are separate boundaries. Keep files as evidence, verify them outside
+the write lock, recheck mutable authority inside it, and publish all related database
+changes atomically. A retry of publication must not become a retry of inference.
+
+
+Stage verification: 918 tests passed on the host and 918 under locked CPU image
+dependencies as UID 10001 (Python 3.12.14, SQLAlchemy 2.1.1, Alembic 1.20.0).
+All 81 maintained Python files passed Ruff lint/format checks. The real-container
+queued smoke passed on `isojam-api:publication-check`: pending acceptance survived
+API replacement, a separate dispatcher/worker published the fake bundle, a fresh
+container verified selected manifest and output paths, the restarted API served
+all seven WAVs with exact manifest hashes, and keyed submission replay returned
+the completed job. All migrations used disposable databases/volumes.
+
+The planned local queued-execution feature branch is ready for a user-opened PR
+before the next feature. Real GPU inference, automatic reconciliation, private
+remote storage/control and hosted deployment remain separate milestones.

@@ -46,7 +46,7 @@ def create_app(
         raise ValueError("max_unfinished_jobs_per_user must be a positive integer")
 
     if processing_mode is not None and processing_mode not in PROCESSING_MODES:
-        raise ValueError("processing_mode must be 'local' or 'disabled'")
+        raise ValueError("processing_mode must be 'local', 'disabled', or 'queued'")
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):

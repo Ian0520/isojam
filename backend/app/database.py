@@ -35,3 +35,21 @@ SessionLocal = sessionmaker(engine)
 def get_db(request: Request) -> Generator[Session, None, None]:
     with request.app.state.db_session_factory() as session:
         yield session
+
+
+def commit_session(session: Session) -> None:
+    """Commit, clearing driver transaction state if the commit fails.
+
+    SQLite can retain a transaction after a failed COMMIT while SQLAlchemy has
+    marked its transaction inactive. Roll back the owned driver before releasing
+    the session connection, so subsequent requests cannot reuse uncommitted work.
+    """
+    driver = session.connection().connection.dbapi_connection
+    try:
+        session.commit()
+    except BaseException:
+        try:
+            driver.rollback()
+        finally:
+            session.rollback()
+        raise

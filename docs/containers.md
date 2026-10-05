@@ -1,10 +1,13 @@
 # CPU API container
 
 This image packages the API for Linux x86_64 using Python 3.12.14. It runs in
-`disabled` processing mode and contains no inference or test dependencies.
+`disabled` processing mode by default and contains no inference or test dependencies.
 Authentication, uploads, job status, and existing output downloads remain
 available; new jobs return 503. GPU workers and external job dispatch are later
-milestones.
+milestones. Setting `ISOJAM_PROCESSING_MODE=queued` accepts durable pending jobs
+without loading a model. A one-cycle local dispatcher/fake-worker now exercises
+permission/contact, durable fake WAV bundles and atomic database publication.
+Real queued inference and remote control/storage remain later work.
 
 The repository contains the recipe and application files. `docker build` creates
 an image in Docker's storage; `docker run` creates a container from that image and
@@ -163,6 +166,8 @@ After building the image, run from the repository root:
 
 ```bash
 python3 backend/scripts/smoke_container.py --image isojam-api:local
+python3 backend/scripts/smoke_container.py --image isojam-api:local --processing-mode queued
+python3 backend/scripts/smoke_container.py --image isojam-api:local --processing-mode queued --dispatch-fake-worker
 ```
 
 This host script uses only Python's standard library and Docker CLI. It generates
@@ -172,11 +177,23 @@ real `.env.container` or use `isojam-data`. It checks:
 - Non-root execution, expected configured paths, matching installed dependency
   versions, absence of inference/test packages, and writable mounted storage.
 - Alembic migrations using the same image and volume as the API.
-- Real HTTP health, registration, login, WAV upload, and authenticated 503 / missing
-  authentication 401 for job submission.
+- Real HTTP health, registration, login, WAV upload, and missing-authentication
+  401 for job submission. Disabled mode checks authenticated 503; queued mode
+  checks pending acceptance, keyed replay, status, and unavailable outputs (409).
 - Clean shutdown followed by removal and recreation of the API container.
-- Login and job ownership lookup after replacement, zero persisted jobs, and
-  unchanged saved WAV bytes in the volume.
+- Login after replacement and unchanged saved WAV bytes in the volume. Disabled
+  mode leaves zero jobs; queued mode preserves one pending queued job and its
+  receipt, without creating an attempt/output or another job on replay.
+
+With `--dispatch-fake-worker` (queued mode only), the script additionally runs a
+separate one-cycle dispatcher container after the API is stopped. The same CPU
+image uses a different command to launch its local fake-worker child. It verifies
+one succeeded attempt with invocation/start/heartbeat/finish evidence, a completed
+job, seven published output rows, and verified fake WAVs plus their selected
+manifest in the volume. It checks an idle second dispatcher container, restarts
+the API, replays the original submission key, and downloads all seven owned WAVs
+with exact published hashes. This demonstrates process roles, publication and
+the shared same-host volume. The files are dummy audio; the model is not loaded.
 
 The script publishes a dynamically allocated port on host loopback and removes
 only resources carrying its run-specific label, including on failure. The built
@@ -214,6 +231,31 @@ storage size, not application RAM usage or registry download size. The image is
 available locally as `isojam-api:local`; validation left no API server running.
 These checks do not yet validate remote hosting or GPU processing.
 
+### Queued-mode validation (2026-10-05)
+
+The updated image `isojam-api:queued-check` passed the smoke script in both
+CPU modes. Queued mode preserved one pending job and its receipt through
+replacement, returned the same job on keyed replay, kept outputs unavailable,
+and preserved exact uploaded WAV bytes. No attempt or output was created.
+Disabled mode retained 503 and zero job/receipt behavior. All resources created
+by these smoke runs were removed; existing development/exercise data was unused.
+
+All 742 backend tests passed on the host and in the locked container as UID 10001.
+Host Ruff lint/format passed across 70 maintained Python files. The separate
+runner and GPU execution remain unimplemented.
+
+### Dispatcher-command validation (2026-10-05)
+
+The updated `isojam-api:dispatcher-check` image passed the queued smoke with
+`--dispatch-fake-worker`: real HTTP acceptance and replacement preceded a separate
+dispatcher container and fake-worker child, committed contact/processing state,
+and an idle second dispatcher container. No stems were generated or published.
+All resources created by the smoke were removed; existing data was unused.
+
+All 790 tests passed on the host and in the locked container as UID 10001.
+Lint/format passed across 75 maintained Python files. These checks validate the
+local coordination commands, not hosted GPU execution or complete recovery.
+
 ## References
 
 - [Docker Desktop installation](https://docs.docker.com/desktop/setup/install/windows-install/)
@@ -221,3 +263,28 @@ These checks do not yet validate remote hosting or GPU processing.
 - [Docker build practices](https://docs.docker.com/build/building/best-practices/)
 - [Named volumes](https://docs.docker.com/engine/storage/volumes/)
 - [Dockerfile reference](https://docs.docker.com/reference/dockerfile/)
+
+
+### Durable fake result bundle verification (2026-10-05)
+
+The `isojam-api:results-check` image passed the queued smoke with
+`--dispatch-fake-worker`. The worker saved seven tiny fake WAVs and a manifest in
+the disposable volume. A fresh container independently verified identity, profile,
+stem set, canonical paths, sizes, SHA-256 and WAV contents. The job stayed processing,
+the attempt stayed running, no output rows were published, and the second dispatch
+cycle stayed idle. The script cleaned up its labeled containers and volume; the
+existing Docker exercise volume was preserved.
+
+
+### Atomic publication and owned download verification (2026-10-05)
+
+The `isojam-api:publication-check` image passed the queued smoke with
+`--dispatch-fake-worker`. After the separate worker exited, the dispatcher
+published all seven output rows with the selected manifest and job/attempt
+completion. A fresh container verified the stored paths and manifest hash; an
+idle second cycle created no additional work. The script then restarted the API,
+logged in, downloaded every owned dummy WAV with its exact published SHA-256,
+and replayed the original submission key to retrieve the completed job.
+The full locked suite passed 918 tests as UID 10001. Verification resources were
+removed using their run-specific labels. For an existing database, stop control
+processes and apply `python -m alembic upgrade head` before using this dispatcher.

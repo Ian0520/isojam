@@ -9,7 +9,7 @@ This is a backend-focused side project built with FastAPI, SQLAlchemy, and BS-Ro
 - Register and log in with email and password
 - Authenticate requests using short-lived JWT access tokens
 - Upload WAV audio files
-- Create background source-separation jobs
+- Create local background source-separation jobs or persist queued jobs
 - Retrieve processing status and download generated stems
 - Persist users, uploads, jobs, and output metadata in SQLite
 - Restrict uploads, jobs, and downloads to their owners
@@ -21,7 +21,8 @@ The current model produces vocals, drums, bass, guitar, piano, other, and instru
 - Source separation supports WAV input only
 - Audio files are stored on the local filesystem
 - Metadata is stored in SQLite
-- Processing uses in-process FastAPI background tasks
+- Local processing uses in-process FastAPI background tasks
+- Queued mode has a one-cycle local fake dispatcher/worker that saves and publishes verified dummy WAV bundles; real queued inference is not implemented yet
 - Interrupted jobs are not automatically resumed after a restart
 - Authentication uses access tokens only; refresh tokens are not implemented
 
@@ -37,7 +38,9 @@ FastAPI — authentication and ownership checks
 
 In local processing mode, the application loads one model session during startup
 and reuses it across processing jobs. Disabled processing mode starts the API
-without importing the inference package or loading a model.
+without importing the inference package or loading a model. Queued mode also starts
+without a model and accepts durable pending jobs for a separate dispatcher. A
+one-cycle local fake runner currently exercises authorization and contact only.
 
 Users own uploads. Job and output ownership is derived through the associated upload. Alembic manages database schema changes.
 
@@ -79,7 +82,7 @@ python -m pip install --no-deps --no-build-isolation .
 python -m pip check
 ```
 
-Then select disabled processing mode as described below. The inference extra
+Then select disabled or queued processing mode as described below. The inference extra
 contains the model package and its GPU inference dependencies. These CPU locks
 do not cover the GPU environment. See [Python Runtime](docs/python-runtime.md)
 for the installation flags, target environment, and lock-update workflow.
@@ -192,8 +195,8 @@ contents and duration; multipart overhead does not increase the allowed file siz
 
 ### Configure Processing Mode
 
-`ISOJAM_PROCESSING_MODE` accepts `local` (the default) or `disabled`. Invalid values
-fail startup before model loading.
+`ISOJAM_PROCESSING_MODE` accepts `local` (the default), `disabled`, or `queued`.
+Invalid values fail startup before model loading.
 
 Local mode requires the inference extra and a compatible CUDA environment. The
 model loads once during startup and closes during shutdown. A missing inference
@@ -210,6 +213,78 @@ Health, registration, login, uploads, job status and existing output downloads
 remain available. New processing jobs return `503` without creating a job record
 or scheduling work. This mode does not perform CPU inference or submit jobs to an
 external worker; worker integration is still required for a complete hosted flow.
+
+To accept durable work without loading a model:
+
+```bash
+export ISOJAM_PROCESSING_MODE=queued
+```
+
+Queued mode commits a pending job with `execution_backend="queued"` and returns
+its ID without scheduling a background task. Jobs and optional idempotency
+receipts commit together, and remain available after API replacement. Ownership,
+authentication, and the unfinished-job allowance still apply. Replaying a receipt
+returns the original job even if the API's processing mode has changed; it does
+not change that job's backend or schedule it again.
+
+Queued jobs remain pending until a dispatcher reserves and submits them. The
+current local fake runner authorizes one invocation, saves seven dummy WAVs and
+publishes their output records with completion. Pending/processing jobs count
+toward the allowance and cannot serve outputs (409); completed jobs expose owned
+downloads. Queued mode remains a development exercise until real inference,
+reconciliation and hosted storage/control are connected.
+
+### Local dispatcher coordination exercise
+
+After applying migrations, a dispatcher can run separately from the API. From
+`backend`, with the same absolute `ISOJAM_DATABASE_PATH` and
+`ISOJAM_AUDIO_STORAGE_DIR` as the queued API:
+
+```bash
+python -m app.dispatcher --once --adapter local-fake
+```
+
+This explicitly runs one cycle: commit reservation, commit submission intent,
+then start `python -m app.fake_worker` as a separate child. The fake worker reads
+its validated invocation from standard input, obtains permission and records one
+heartbeat, then generates seven tiny deterministic WAVs in a private workspace.
+It saves a verified bundle under `ISOJAM_AUDIO_STORAGE_DIR/results`. These are
+explicitly fake artifacts, not separated audio. Neither command starts FastAPI
+or loads the inference model. The local adapter uses the shared SQLite file on
+the same host; it is not remote GPU control.
+
+The dispatcher prints one JSON report. `completed` includes a `manifest_key` and
+means the local worker exited successfully, the fake bundle passed verification,
+and its output records and completion committed together.
+The manifest records its job/attempt/invocation identity, fake processing profile,
+complete stem set, canonical storage keys, byte sizes, and SHA-256 hashes. Files
+are installed without replacement; the manifest is installed last. Missing,
+changed, invalid or unsafe files cannot pass verification.
+
+Publication checks the current attempt, dispatcher owner/generation and invocation
+inside a short SQLite transaction. All seven output rows, the selected manifest
+key/hash, the succeeded attempt and completed job commit together. The owner can
+then download the dummy WAVs through the existing output routes. Identical repeated
+publication acknowledges the saved result without rewriting rows or timestamps.
+The worker's `result_ready` report alone cannot complete a job.
+
+`idle` means no eligible work or occupied capacity. Successful publication releases
+the global slot for another pending queued job. With no pending jobs, a second
+cycle is idle.
+Use disposable data for this intermediate exercise. For a fully isolated container
+exercise that creates and removes its own volume, see [Containers](docs/containers.md).
+
+Launch/report errors print `submission_unresolved` and preserve existing attempt
+state. Failed publication leaves the files available and the attempt occupied;
+`publication_unresolved`, `publication_denied`, `publication_conflict` and
+`result_invalid` never authorize another execution. A database lock wait returns
+`database_busy` (exit 75). Publication can be retried separately after execution
+has ended; simply running another dispatch cycle does not reconcile an occupied
+attempt. There is no automatic resubmission, timeout-based release,
+expired-reservation scanner or polling loop yet. CLI defaults are 60 seconds for
+pre-submission ownership, 300 for receiving execution permission, 30 for the local
+fake-child wait, and 1000 milliseconds for each SQLite lock wait. The child timeout
+is specific to this fake transport; it is not a GPU execution-time limit.
 
 ## Running
 

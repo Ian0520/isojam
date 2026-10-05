@@ -42,6 +42,7 @@ def create_submission(
     *,
     key: str | None,
     max_unfinished_jobs: int,
+    execution_backend: str = "local",
 ) -> JobSubmission | None:
     """Admit or replay in the caller's transaction; never commit or dispatch.
 
@@ -49,6 +50,7 @@ def create_submission(
     a competing request waits for the receipt to commit, then inserts no job.
     Re-read its receipt after that statement, even when the quota is now full.
     The caller must commit the new job and receipt together before dispatch.
+    Backend selection applies only to a new job; replay retains the original.
     """
     job = jobs.create_job_with_limit(
         session,
@@ -56,6 +58,7 @@ def create_submission(
         user_id,
         max_unfinished_jobs=max_unfinished_jobs,
         submission_key=key,
+        execution_backend=execution_backend,
     )
     if job is None:
         replay = (

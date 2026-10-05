@@ -8,7 +8,7 @@ from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from app.auth import get_current_user
-from app.database import get_db
+from app.database import commit_session, get_db
 from app.db_models import Job, JobOutput, User
 from app.processing import process_job
 from app.repositories import job_outputs, job_submissions, jobs, uploads
@@ -84,6 +84,7 @@ def create_job_endpoint(
             current_user.id,
             key=idempotency_key,
             max_unfinished_jobs=request.app.state.max_unfinished_jobs_per_user,
+            execution_backend=request.app.state.processing_mode,
         )
     except job_submissions.SubmissionConflictError as error:
         session.rollback()
@@ -96,15 +97,16 @@ def create_job_endpoint(
         )
     job = submission.job
     job_id = job.id
-    session.commit()
+    commit_session(session)
 
     if submission.created:
-        background_tasks.add_task(
-            process_job,
-            job_id,
-            request.app.state.model_session,
-            request.app.state.db_session_factory,
-        )
+        if job.execution_backend == "local":
+            background_tasks.add_task(
+                process_job,
+                job_id,
+                request.app.state.model_session,
+                request.app.state.db_session_factory,
+            )
         return serialize_job(job, [])
     outputs = job_outputs.get_job_outputs(session, job_id)
     return serialize_job(job, outputs)
