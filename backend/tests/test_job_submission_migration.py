@@ -1,10 +1,12 @@
+from uuid import uuid4
+
 from alembic import command
 from alembic.config import Config
 from sqlalchemy import URL, create_engine, inspect, select, text
 from sqlalchemy.orm import Session
 
 from app.database import enable_sqlite_foreign_keys
-from app.db_models import JobAttempt, JobOutput, JobSubmissionReceipt
+from app.db_models import JobOutput, JobSubmissionReceipt
 from app.repositories import job_submissions
 from tests.factories import create_test_job, create_test_upload, create_test_user
 
@@ -14,7 +16,12 @@ def snapshot(engine):
     with engine.connect() as connection:
         return {
             table: connection.execute(
-                text(f"SELECT * FROM {table} ORDER BY 1, 2")
+                text(
+                    "SELECT id, job_id, attempt_number, phase, created_at, updated_at, "
+                    "started_at, finished_at FROM job_attempts ORDER BY 1, 2"
+                    if table == "job_attempts"
+                    else f"SELECT * FROM {table} ORDER BY 1, 2"
+                )
             ).all()
             for table in tables
         }
@@ -34,7 +41,13 @@ def test_receipt_upgrade_and_downgrade_preserve_existing_records(tmp_path, monke
             user = create_test_user(session)
             upload = create_test_upload(session, user)
             job = create_test_job(session, upload, "completed")
-            session.add(JobAttempt(job_id=job.id, attempt_number=1, phase="succeeded"))
+            session.execute(
+                text(
+                    "INSERT INTO job_attempts (id, job_id, attempt_number, phase) "
+                    "VALUES (:id, :job_id, 1, 'succeeded')"
+                ),
+                {"id": uuid4().hex, "job_id": job.id.hex},
+            )
             session.add(JobOutput(job_id=job.id, stem="guitar", path=str(output_path)))
             user_id, upload_id = user.id, upload.id
             session.commit()

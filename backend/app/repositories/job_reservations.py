@@ -2,10 +2,12 @@ import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
-from sqlalchemy import Connection, Engine, insert, select
+from sqlalchemy import Connection, Engine, insert, select, update
 from sqlalchemy.exc import OperationalError
+from sqlalchemy.sql.elements import ColumnElement
 
 from app.db_models import Job, JobAttempt
 
@@ -13,7 +15,7 @@ TERMINAL_ATTEMPT_PHASES = frozenset({"succeeded", "failed"})
 
 
 class ReservationBusyError(RuntimeError):
-    """SQLite contention prevented reservation; the caller may try again later."""
+    """SQLite contention prevented a reservation operation; the caller may try again later."""
 
 
 @dataclass(frozen=True)
@@ -21,12 +23,19 @@ class JobReservation:
     job_id: UUID
     attempt_id: UUID
     attempt_number: int
+    dispatcher_id: UUID
+    dispatcher_generation: int
+    reservation_expires_at: datetime
 
 
 @contextmanager
 def _reservation_transaction(
     engine: Engine, busy_timeout_ms: int
 ) -> Iterator[Connection]:
+    if engine.dialect.name != "sqlite":
+        raise ValueError("Job reservation currently supports SQLite only")
+    if type(busy_timeout_ms) is not int or not 0 <= busy_timeout_ms <= 30000:
+        raise ValueError("busy_timeout_ms must be an integer between 0 and 30000")
     with engine.connect() as connection:
         driver = connection.connection.dbapi_connection
         # The application's pinned Python/SQLite engine uses legacy transaction
@@ -66,7 +75,11 @@ def _reservation_transaction(
 
 
 def reserve_next_job(
-    engine: Engine, *, busy_timeout_ms: int = 1000
+    engine: Engine,
+    *,
+    dispatcher_id: UUID,
+    reservation_ttl_seconds: int = 60,
+    busy_timeout_ms: int = 1000,
 ) -> JobReservation | None:
     """Commit a first-attempt reservation for the oldest eligible queued job.
 
@@ -79,12 +92,12 @@ def reserve_next_job(
     Contention raises ReservationBusyError; no work/occupied capacity returns None.
     This operation owns a fresh connection and its commit, unlike repositories
     participating in an existing request session. The caller may use the returned
-    identifiers only after the commit succeeds.
+    identifiers only after the commit succeeds. Use a fresh dispatcher UUID per
+    process lifetime. Reservation lifetime is 1-3600 seconds (default 60); it is
+    pre-submission ownership, not a worker execution deadline.
     """
-    if engine.dialect.name != "sqlite":
-        raise ValueError("Job reservation currently supports SQLite only")
-    if type(busy_timeout_ms) is not int or not 0 <= busy_timeout_ms <= 30000:
-        raise ValueError("busy_timeout_ms must be an integer between 0 and 30000")
+    _validate_dispatcher_id(dispatcher_id)
+    _validate_reservation_lifetime(reservation_ttl_seconds)
 
     with _reservation_transaction(engine, busy_timeout_ms) as connection:
         active_attempt = connection.scalar(
@@ -114,12 +127,149 @@ def reserve_next_job(
             return None
 
         attempt_id = uuid4()
+        expires_at = _utc_now() + timedelta(seconds=reservation_ttl_seconds)
         connection.execute(
             insert(JobAttempt).values(
                 id=attempt_id,
                 job_id=job_id,
                 attempt_number=1,
                 phase="reserved",
+                dispatcher_id=dispatcher_id,
+                dispatcher_generation=1,
+                reservation_expires_at=expires_at,
             )
         )
-        return JobReservation(job_id, attempt_id, attempt_number=1)
+        return JobReservation(job_id, attempt_id, 1, dispatcher_id, 1, expires_at)
+
+
+def _utc_now() -> datetime:
+    # Control processes share the SQLite host clock. Sample only after obtaining
+    # the write lock; time spent waiting for the lock must not extend authority.
+    return datetime.now(UTC)
+
+
+def _validate_dispatcher_id(dispatcher_id: UUID) -> None:
+    if not isinstance(dispatcher_id, UUID):
+        raise ValueError("dispatcher_id must be a UUID")
+
+
+def _validate_reservation_lifetime(reservation_ttl_seconds: int) -> None:
+    if (
+        type(reservation_ttl_seconds) is not int
+        or not 1 <= reservation_ttl_seconds <= 3600
+    ):
+        raise ValueError(
+            "reservation_ttl_seconds must be an integer between 1 and 3600"
+        )
+
+
+def _current_pending_queued_attempt() -> ColumnElement[bool]:
+    eligible_job = (
+        select(Job.id)
+        .where(
+            Job.id == JobAttempt.job_id,
+            Job.execution_backend == "queued",
+            Job.status == "pending",
+        )
+        .exists()
+    )
+    newer = JobAttempt.__table__.alias("newer_attempt")
+    has_newer_attempt = (
+        select(newer.c.id)
+        .where(
+            newer.c.job_id == JobAttempt.job_id,
+            newer.c.attempt_number > JobAttempt.attempt_number,
+        )
+        .exists()
+    )
+    return eligible_job & ~has_newer_attempt
+
+
+def reclaim_reservation(
+    engine: Engine,
+    attempt_id: UUID,
+    *,
+    dispatcher_id: UUID,
+    reservation_ttl_seconds: int = 60,
+    busy_timeout_ms: int = 1000,
+) -> JobReservation | None:
+    """Commit new ownership of an expired, owned, pre-submission reservation.
+
+    The attempt and its occupied slot are preserved; this is not an inference
+    retry. Generation increases even when the same dispatcher reclaims. Existing
+    unowned attempts are not granted authority automatically. Submission or any
+    later phase forbids takeover, regardless of expiry or heartbeat age.
+    """
+    _validate_dispatcher_id(dispatcher_id)
+    _validate_reservation_lifetime(reservation_ttl_seconds)
+    if not isinstance(attempt_id, UUID):
+        raise ValueError("attempt_id must be a UUID")
+    with _reservation_transaction(engine, busy_timeout_ms) as connection:
+        now = _utc_now()
+        row = connection.execute(
+            update(JobAttempt)
+            .where(
+                JobAttempt.id == attempt_id,
+                JobAttempt.phase == "reserved",
+                JobAttempt.dispatcher_id.is_not(None),
+                JobAttempt.dispatcher_generation > 0,
+                JobAttempt.reservation_expires_at <= now,
+                _current_pending_queued_attempt(),
+            )
+            .values(
+                dispatcher_id=dispatcher_id,
+                dispatcher_generation=JobAttempt.dispatcher_generation + 1,
+                reservation_expires_at=now + timedelta(seconds=reservation_ttl_seconds),
+                updated_at=now,
+            )
+            .returning(
+                JobAttempt.job_id,
+                JobAttempt.id,
+                JobAttempt.attempt_number,
+                JobAttempt.dispatcher_id,
+                JobAttempt.dispatcher_generation,
+                JobAttempt.reservation_expires_at,
+            )
+        ).one_or_none()
+        return None if row is None else JobReservation(*row)
+
+
+def begin_submission(
+    engine: Engine, reservation: JobReservation, *, busy_timeout_ms: int = 1000
+) -> bool:
+    """Commit submission intent once for a current, unexpired reservation.
+
+    True is returned only after the transition commits. Only that successful
+    caller may make the initial external submission. A duplicate/stale call
+    returns False; a commit error raises. Never contact a worker inside the
+    transaction. A crash or ambiguous response after intent requires reconciliation,
+    not another call to submit. This is not worker execution authorization.
+    """
+    _validate_dispatcher_id(reservation.dispatcher_id)
+    if not isinstance(reservation.job_id, UUID) or not isinstance(
+        reservation.attempt_id, UUID
+    ):
+        raise ValueError("reservation identifiers must be UUIDs")
+    for value in (reservation.attempt_number, reservation.dispatcher_generation):
+        if type(value) is not int or value < 1:
+            raise ValueError(
+                "reservation number and generation must be positive integers"
+            )
+    with _reservation_transaction(engine, busy_timeout_ms) as connection:
+        now = _utc_now()
+        changed = connection.scalar(
+            update(JobAttempt)
+            .where(
+                JobAttempt.id == reservation.attempt_id,
+                JobAttempt.job_id == reservation.job_id,
+                JobAttempt.attempt_number == reservation.attempt_number,
+                JobAttempt.dispatcher_id == reservation.dispatcher_id,
+                JobAttempt.dispatcher_generation == reservation.dispatcher_generation,
+                JobAttempt.phase == "reserved",
+                JobAttempt.reservation_expires_at > now,
+                _current_pending_queued_attempt(),
+            )
+            .values(phase="submitting", updated_at=now)
+            .returning(JobAttempt.id)
+        )
+        return changed is not None

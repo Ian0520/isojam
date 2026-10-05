@@ -1,40 +1,17 @@
 import multiprocessing
 from datetime import UTC, datetime, timedelta
 from time import monotonic
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
-from alembic import command
-from alembic.config import Config
 from sqlalchemy import URL, create_engine, event, select
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from app.database import enable_sqlite_foreign_keys
-from app.db_models import Base, Job, JobAttempt
+from app.db_models import Job, JobAttempt
 from app.repositories.job_reservations import ReservationBusyError, reserve_next_job
 from tests.factories import create_test_upload, create_test_user
-
-
-@pytest.fixture(params=["models", "migration"])
-def reservation_engine(request, tmp_path, monkeypatch):
-    path = tmp_path / "reservations.db"
-    url = URL.create("sqlite", database=str(path))
-    # Spawned processes import app.database afresh; keep that engine's configured
-    # path inside this test too, even though reservations use the explicit engine.
-    monkeypatch.setenv("ISOJAM_DATABASE_PATH", str(path))
-    monkeypatch.setenv("ISOJAM_AUDIO_STORAGE_DIR", str(tmp_path / "audio"))
-    if request.param == "migration":
-        monkeypatch.setenv("ALEMBIC_DATABASE_URL", str(url))
-        command.upgrade(Config("alembic.ini"), "head")
-    engine = create_engine(url)
-    enable_sqlite_foreign_keys(engine)
-    if request.param == "models":
-        Base.metadata.create_all(engine)
-    try:
-        yield engine
-    finally:
-        engine.dispose()
 
 
 def seed_job(
@@ -76,7 +53,7 @@ def reserve_in_process(database_url, barrier, results):
 
     event.listen(engine, "before_cursor_execute", synchronize)
     try:
-        result = reserve_next_job(engine, busy_timeout_ms=2000)
+        result = reserve_next_job(engine, dispatcher_id=uuid4(), busy_timeout_ms=2000)
         results.put(
             None if result is None else (str(result.job_id), str(result.attempt_id))
         )
@@ -100,14 +77,14 @@ def die_before_commit(database_url, inserted, release):
 
     event.listen(engine, "after_cursor_execute", stop_after_insert)
     try:
-        reserve_next_job(engine)
+        reserve_next_job(engine, dispatcher_id=uuid4())
     finally:
         engine.dispose()
 
 
 def test_reservation_commits_attempt_and_leaves_job_pending(reservation_engine):
     job_id = seed_job(reservation_engine)
-    reservation = reserve_next_job(reservation_engine)
+    reservation = reserve_next_job(reservation_engine, dispatcher_id=uuid4())
     assert reservation.job_id == job_id
     assert reservation.attempt_number == 1
     stored = attempts(reservation_engine)
@@ -138,11 +115,13 @@ def test_oldest_job_is_reserved_with_deterministic_id_tie_break(reservation_engi
         job_id=UUID(int=2),
         email="third@example.com",
     )
-    assert reserve_next_job(reservation_engine).job_id == expected
+    assert (
+        reserve_next_job(reservation_engine, dispatcher_id=uuid4()).job_id == expected
+    )
 
 
 def test_empty_queue_returns_none(reservation_engine):
-    assert reserve_next_job(reservation_engine) is None
+    assert reserve_next_job(reservation_engine, dispatcher_id=uuid4()) is None
     assert attempts(reservation_engine) == []
 
 
@@ -164,7 +143,7 @@ def test_local_and_non_pending_jobs_are_excluded(reservation_engine):
             status=status,
             email=f"user{index}@example.com",
         )
-    assert reserve_next_job(reservation_engine) is None
+    assert reserve_next_job(reservation_engine, dispatcher_id=uuid4()) is None
     assert attempts(reservation_engine) == []
 
 
@@ -187,7 +166,7 @@ def test_non_terminal_queued_attempt_holds_global_slot(reservation_engine, phase
         # Even an inconsistent public status cannot release uncertain execution.
         session.get(Job, active_job).status = "failed"
         session.commit()
-    assert reserve_next_job(reservation_engine) is None
+    assert reserve_next_job(reservation_engine, dispatcher_id=uuid4()) is None
     assert len(attempts(reservation_engine)) == 1
 
 
@@ -201,9 +180,11 @@ def test_terminal_attempt_frees_slot_but_is_not_automatically_retried(
     with Session(reservation_engine) as session:
         session.add(JobAttempt(job_id=attempted_job, attempt_number=1, phase=phase))
         session.commit()
-    assert reserve_next_job(reservation_engine) is None
+    assert reserve_next_job(reservation_engine, dispatcher_id=uuid4()) is None
     fresh_job = seed_job(reservation_engine, email="other@example.com")
-    assert reserve_next_job(reservation_engine).job_id == fresh_job
+    assert (
+        reserve_next_job(reservation_engine, dispatcher_id=uuid4()).job_id == fresh_job
+    )
     assert len(attempts(reservation_engine)) == 2
 
 
@@ -213,7 +194,9 @@ def test_local_attempt_does_not_occupy_queued_execution_slot(reservation_engine)
         session.add(JobAttempt(job_id=local_job, attempt_number=1, phase="running"))
         session.commit()
     queued_job = seed_job(reservation_engine, email="other@example.com")
-    assert reserve_next_job(reservation_engine).job_id == queued_job
+    assert (
+        reserve_next_job(reservation_engine, dispatcher_id=uuid4()).job_id == queued_job
+    )
 
 
 @pytest.mark.parametrize("job_count", [1, 2])
@@ -248,7 +231,7 @@ def test_competing_processes_reserve_only_one_global_attempt(
         # A fresh engine simulates a later dispatcher process restarting.
         restarted = create_engine(reservation_engine.url)
         try:
-            assert reserve_next_job(restarted) is None
+            assert reserve_next_job(restarted, dispatcher_id=uuid4()) is None
         finally:
             restarted.dispose()
     finally:
@@ -275,7 +258,9 @@ def test_process_death_before_commit_leaves_job_unreserved(reservation_engine):
         process.join(timeout=5)
         assert not process.is_alive()
         assert attempts(reservation_engine) == []
-        assert reserve_next_job(reservation_engine).job_id == job_id
+        assert (
+            reserve_next_job(reservation_engine, dispatcher_id=uuid4()).job_id == job_id
+        )
     finally:
         if process.is_alive():
             process.terminate()
@@ -304,7 +289,9 @@ def test_contention_is_bounded_rolls_back_and_restores_connection_settings(
                 locker.exec_driver_sql("SELECT id FROM jobs").all()
             started = monotonic()
             with pytest.raises(ReservationBusyError) as caught:
-                reserve_next_job(reservation_engine, busy_timeout_ms=25)
+                reserve_next_job(
+                    reservation_engine, dispatcher_id=uuid4(), busy_timeout_ms=25
+                )
             assert monotonic() - started < 2
             assert isinstance(caught.value.__cause__, OperationalError)
             locker.rollback()
@@ -316,7 +303,9 @@ def test_contention_is_bounded_rolls_back_and_restores_connection_settings(
                 connection.exec_driver_sql("PRAGMA busy_timeout").scalar_one() == 4321
             )
             assert not connection.connection.dbapi_connection.in_transaction
-        assert reserve_next_job(reservation_engine).job_id == job_id
+        assert (
+            reserve_next_job(reservation_engine, dispatcher_id=uuid4()).job_id == job_id
+        )
         with reservation_engine.connect() as connection:
             assert (
                 connection.exec_driver_sql("PRAGMA busy_timeout").scalar_one() == 4321
@@ -334,11 +323,11 @@ def test_failed_commit_rolls_back_attempt_and_allows_retry(reservation_engine):
     event.listen(reservation_engine, "commit", fail_commit)
     try:
         with pytest.raises(RuntimeError, match="commit failed"):
-            reserve_next_job(reservation_engine)
+            reserve_next_job(reservation_engine, dispatcher_id=uuid4())
     finally:
         event.remove(reservation_engine, "commit", fail_commit)
     assert attempts(reservation_engine) == []
-    assert reserve_next_job(reservation_engine).job_id == job_id
+    assert reserve_next_job(reservation_engine, dispatcher_id=uuid4()).job_id == job_id
 
 
 def test_missing_schema_is_not_misreported_as_contention(tmp_path):
@@ -347,7 +336,7 @@ def test_missing_schema_is_not_misreported_as_contention(tmp_path):
     )
     try:
         with pytest.raises(OperationalError, match="no such table"):
-            reserve_next_job(engine)
+            reserve_next_job(engine, dispatcher_id=uuid4())
     finally:
         engine.dispose()
 
@@ -360,7 +349,7 @@ def test_unsupported_driver_transaction_mode_is_rejected(tmp_path, autocommit):
     )
     try:
         with pytest.raises(ValueError, match="legacy transaction control"):
-            reserve_next_job(engine)
+            reserve_next_job(engine, dispatcher_id=uuid4())
     finally:
         engine.dispose()
 
@@ -368,4 +357,6 @@ def test_unsupported_driver_transaction_mode_is_rejected(tmp_path, autocommit):
 @pytest.mark.parametrize("timeout", [-1, 30001, True])
 def test_invalid_timeout_cannot_make_lock_wait_unbounded(reservation_engine, timeout):
     with pytest.raises(ValueError, match="busy_timeout_ms"):
-        reserve_next_job(reservation_engine, busy_timeout_ms=timeout)
+        reserve_next_job(
+            reservation_engine, dispatcher_id=uuid4(), busy_timeout_ms=timeout
+        )
