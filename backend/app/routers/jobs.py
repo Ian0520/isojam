@@ -55,7 +55,20 @@ def create_job_endpoint(
     upload = uploads.get_upload(session, upload_id)
     if upload is None or current_user.id != upload.user_id:
         raise HTTPException(status_code=404, detail="The upload does not exist")
-    job = jobs.create_job(session, upload_id)
+    if request.app.state.processing_mode == "disabled":
+        raise HTTPException(status_code=503, detail="Audio processing is unavailable")
+    job = jobs.create_job_with_limit(
+        session,
+        upload_id,
+        current_user.id,
+        max_unfinished_jobs=request.app.state.max_unfinished_jobs_per_user,
+    )
+    if job is None:
+        session.rollback()
+        raise HTTPException(
+            status_code=429,
+            detail="Unfinished job limit reached; wait for a job to finish",
+        )
     job_id = job.id
     session.commit()
 

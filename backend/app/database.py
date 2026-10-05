@@ -1,13 +1,13 @@
 from collections.abc import Generator
-from pathlib import Path
 
 from fastapi import Request
-from sqlalchemy import create_engine, event
+from sqlalchemy import URL, create_engine, event
 from sqlalchemy.orm import Session, sessionmaker
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-DATABASE_PATH = PROJECT_ROOT / "data" / "isojam.db"
-DATABASE_URL = f"sqlite:///{DATABASE_PATH}"
+from app.config import get_database_path
+
+DATABASE_PATH = get_database_path()
+DATABASE_URL = URL.create("sqlite", database=str(DATABASE_PATH))
 
 
 def _set_sqlite_foreign_keys(dbapi_connection, connection_record):

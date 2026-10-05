@@ -1,3 +1,6 @@
+import wave
+from io import BytesIO
+
 from app.db_models import Job, Upload, User
 
 
@@ -32,3 +35,15 @@ def create_test_job(session, upload, status="pending"):
     session.add(job)
     session.flush()
     return job
+
+
+def make_wav_bytes(
+    *, frames: int = 16, sample_rate: int = 44100, channels: int = 2
+) -> bytes:
+    buffer = BytesIO()
+    with wave.open(buffer, "wb") as audio:
+        audio.setnchannels(channels)
+        audio.setsampwidth(2)
+        audio.setframerate(sample_rate)
+        audio.writeframes(b"\x00\x00" * frames * channels)
+    return buffer.getvalue()

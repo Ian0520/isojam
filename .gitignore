@@ -3,9 +3,12 @@ __pycache__/
 *.py[cod]
 .venv/
 *.egg-info/
+/backend/build/
+/backend/dist/
 
 # Environment variables
 .env
+/backend/.env.container
 
 # IDE / OS
 .vscode/
