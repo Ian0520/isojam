@@ -708,6 +708,88 @@ not used. The runner is not yet implemented, so queued jobs remain pending and
 consume quota until later execution is connected. No production mode is enabled
 implicitly, and no GPU/provider/remote-host execution is claimed.
 
+### Implemented slice: one-cycle local dispatcher and fake worker (2026-10-05)
+
+This is stage two of `feat/queued-execution`, following queued API acceptance.
+The branch remains open for attempt output/publication work and learning reviews.
+No schema or dependency-lock change is needed for this slice.
+
+`python -m app.dispatcher --once --adapter local-fake` explicitly runs one cycle
+with a fresh dispatcher UUID. It reserves eligible queued work, commits submission
+intent/deadline, and only then invokes the execution adapter. No write transaction
+spans the adapter call or worker wait. Empty/occupied capacity returns idle.
+A denied submission transition or failed authority commit launches no worker.
+Both lifetimes are validated before a reservation can be persisted.
+
+The local adapter starts `python -m app.fake_worker` using the current Python
+interpreter, with a typed version-one invocation on standard input and a bounded
+report read. The invocation contains job/attempt identity, dispatcher generation,
+informational reservation expiry and a fresh invocation UUID. Strict positive
+integer fields, aware time and forbidden extra fields protect this internal
+message shape. These identifiers are not authentication credentials. The child
+receives the adapter's absolute file-backed SQLite path; in-memory, relative and
+URI-option engines are rejected. User JWT signing configuration is not passed
+to the child. This trusted same-host transport is not a remote storage/control API.
+
+The fake worker obtains execution permission before reporting one heartbeat.
+Duplicate or denied grants do not report further contact. Grant/control errors
+stop the worker; heartbeat denial produces a distinct report. Successful contact
+uses worker exit zero, denied permission exit three, and rejected contact exit
+four. The adapter validates bounded JSON, echoed identities and matching exit
+status before accepting the report. Help/argument/request validation precedes
+opening the configured database. Neither command starts the API or imports the
+inference implementation.
+
+Dispatcher worker_contact_recorded means the coordination check finished, never
+completed audio. The job remains processing, the attempt running with contact,
+and the slot occupied even after the fake child exits. Worker PID is observational
+only and is not durable authority or a reusable provider reference.
+
+A spawn failure, timeout, oversized/malformed/mismatched report, or lost report
+preserves durable submission/running evidence. A launch/report error returns
+submission_unresolved without terminal writes, capacity release or resubmission.
+The persisted phase can remain submitting when no invocation was registered, or
+running when contact committed before acknowledgement was lost. This slice does
+not introduce a persistent provider uncertainty field or reconciliation scanner.
+A future dispatcher cycle sees the occupied slot and stays idle.
+
+Defaults: reservation lifetime 60 seconds, authorization lifetime 300 seconds,
+local fake-child timeout 30 seconds (configurable 1-60), and per-operation SQLite
+busy wait 1000 milliseconds (configurable 0-30000). The two lifetimes accept 1-3600
+integer seconds. The synchronous fake transport kills and waits for its direct
+child on timeout; the child starts no descendants. Process creation itself is not
+a guaranteed interruptible wall-clock bound. This timeout is not a GPU runtime
+policy or authority to retire an attempt. CLI exits zero for idle/contact, one
+for unresolved/denied/failed operations, and 75 for database contention; argument
+errors exit two. The worker retains separate denial/contact exit codes.
+
+Tests use actual worker subprocesses and independent competing dispatcher processes,
+prove committed intent/write-lock release before launch, deny expired worker grants,
+cover failed reservation/submission commits, preserve contact after a lost report,
+and kill/wait for a direct child stalled after committed contact. API acceptance,
+API shutdown, separate dispatcher CLI and worker, fresh API status, and an idle
+second CLI cycle are exercised with real small WAV uploads. Malformed/bounded
+messages, identity/exit mismatches, repeated deliveries and no-database help/error
+boundaries are checked. All test databases/audio are disposable.
+
+This is one explicit dispatch cycle, not a supervised polling service. It does
+not scan/reclaim expired reservations, reconcile provider acceptance, retry or
+retire executions, run inference, send periodic heartbeats, publish stems, or
+serve authenticated remote worker operations. The next stage adds durable output
+evidence and guarded publication; hosted adapters remain later work.
+
+Validation: all 790 backend tests passed on the host and in a disposable locked
+container (Python 3.12.14 / SQLAlchemy 2.1.1 / Alembic 1.20.0) as UID 10001.
+The 48 new cases include real process/timeout and coordination-boundary checks.
+Ruff lint/format passed across 75 maintained Python files, retaining the original
+two generated-migration exclusions. The CPU image built and pip check passed.
+The real HTTP/container smoke accepted a queued job, replaced/stopped the API,
+ran a separate dispatcher container and its fake-worker child, observed committed
+contact/processing state, and verified an idle second dispatcher container without
+outputs. Existing WAV bytes survived replacement. Disposable test containers and
+smoke volumes were removed; no development database or exercise volume was used.
+No real GPU execution or hosted provider capability is claimed.
+
 ## 10. Review and learning checkpoints
 
 This stage is complete when the proposed flow and recovery tradeoffs have been

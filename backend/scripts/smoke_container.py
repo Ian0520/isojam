@@ -91,7 +91,10 @@ def main():
     parser.add_argument(
         "--processing-mode", choices=["disabled", "queued"], default="disabled"
     )
+    parser.add_argument("--dispatch-fake-worker", action="store_true")
     args = parser.parse_args()
+    if args.dispatch_fake_worker and args.processing_mode != "queued":
+        parser.error("--dispatch-fake-worker requires --processing-mode queued")
     if shutil.which("docker") is None:
         parser.error("Docker is unavailable. Start Docker and enable WSL integration.")
     docker("version", "--format", "{{.Server.Version}}")
@@ -294,6 +297,44 @@ print('Account, upload, job/receipt state, and exact WAV bytes survived containe
             env=env,
         )
         print(result.stdout.strip(), flush=True)
+        if args.dispatch_fake_worker:
+            command = [
+                "python",
+                "-m",
+                "app.dispatcher",
+                "--once",
+                "--adapter",
+                "local-fake",
+            ]
+            dispatched = docker("run", "--rm", *common, args.image, *command, env=env)
+            report = json.loads(dispatched.stdout)
+            assert report["status"] == "worker_contact_recorded"
+            assert report["job_id"] == job_id and report["worker_pid"] > 1
+            repeated = docker("run", "--rm", *common, args.image, *command, env=env)
+            assert json.loads(repeated.stdout)["status"] == "idle"
+            dispatch_check = """
+import sqlite3
+with sqlite3.connect('/var/lib/isojam/metadata/isojam.db') as connection:
+    assert connection.execute('select status from jobs').fetchall() == [('processing',)]
+    attempts = connection.execute('select phase, invocation_id, started_at, last_heartbeat_at, finished_at from job_attempts').fetchall()
+    assert len(attempts) == 1
+    phase, invocation, started, heartbeat, finished = attempts[0]
+    assert phase == 'running' and invocation is not None
+    assert started is not None and heartbeat >= started and finished is None
+    assert connection.execute('select count(*) from job_outputs').fetchone()[0] == 0
+print('Separate dispatcher/fake-worker commands recorded contact; second cycle was idle')
+"""
+            checked = docker(
+                "run",
+                "--rm",
+                *common,
+                args.image,
+                "python",
+                "-c",
+                dispatch_check,
+                env=env,
+            )
+            print(checked.stdout.strip(), flush=True)
         print("Container smoke passed", flush=True)
     except Exception:
         if owns_resource("container", name, marker):

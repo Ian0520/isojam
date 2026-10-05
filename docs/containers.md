@@ -5,7 +5,8 @@ This image packages the API for Linux x86_64 using Python 3.12.14. It runs in
 Authentication, uploads, job status, and existing output downloads remain
 available; new jobs return 503. GPU workers and external job dispatch are later
 milestones. Setting `ISOJAM_PROCESSING_MODE=queued` accepts durable pending jobs
-without loading a model; they remain pending until the dispatcher is implemented.
+without loading a model. A one-cycle local dispatcher/fake-worker now exercises
+permission/contact; queued inference and result publication remain later work.
 
 The repository contains the recipe and application files. `docker build` creates
 an image in Docker's storage; `docker run` creates a container from that image and
@@ -165,6 +166,7 @@ After building the image, run from the repository root:
 ```bash
 python3 backend/scripts/smoke_container.py --image isojam-api:local
 python3 backend/scripts/smoke_container.py --image isojam-api:local --processing-mode queued
+python3 backend/scripts/smoke_container.py --image isojam-api:local --processing-mode queued --dispatch-fake-worker
 ```
 
 This host script uses only Python's standard library and Docker CLI. It generates
@@ -181,6 +183,13 @@ real `.env.container` or use `isojam-data`. It checks:
 - Login after replacement and unchanged saved WAV bytes in the volume. Disabled
   mode leaves zero jobs; queued mode preserves one pending queued job and its
   receipt, without creating an attempt/output or another job on replay.
+
+With `--dispatch-fake-worker` (queued mode only), the script additionally runs a
+separate one-cycle dispatcher container after the API is stopped. The same CPU
+image uses a different command to launch its local fake-worker child. It verifies
+one running attempt with an invocation/start/heartbeat, a processing job, no outputs,
+and an idle second dispatcher container. This demonstrates process roles and the
+shared same-host volume, without loading the model or completing separation.
 
 The script publishes a dynamically allocated port on host loopback and removes
 only resources carrying its run-specific label, including on failure. The built
@@ -230,6 +239,18 @@ by these smoke runs were removed; existing development/exercise data was unused.
 All 742 backend tests passed on the host and in the locked container as UID 10001.
 Host Ruff lint/format passed across 70 maintained Python files. The separate
 runner and GPU execution remain unimplemented.
+
+### Dispatcher-command validation (2026-10-05)
+
+The updated `isojam-api:dispatcher-check` image passed the queued smoke with
+`--dispatch-fake-worker`: real HTTP acceptance and replacement preceded a separate
+dispatcher container and fake-worker child, committed contact/processing state,
+and an idle second dispatcher container. No stems were generated or published.
+All resources created by the smoke were removed; existing data was unused.
+
+All 790 tests passed on the host and in the locked container as UID 10001.
+Lint/format passed across 75 maintained Python files. These checks validate the
+local coordination commands, not hosted GPU execution or complete recovery.
 
 ## References
 

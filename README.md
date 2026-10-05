@@ -22,7 +22,7 @@ The current model produces vocals, drums, bass, guitar, piano, other, and instru
 - Audio files are stored on the local filesystem
 - Metadata is stored in SQLite
 - Local processing uses in-process FastAPI background tasks
-- Queued mode persists work, but the separate dispatcher/worker is not implemented yet
+- Queued mode has a one-cycle local fake dispatcher/worker; queued inference and result publication are not implemented yet
 - Interrupted jobs are not automatically resumed after a restart
 - Authentication uses access tokens only; refresh tokens are not implemented
 
@@ -39,7 +39,8 @@ FastAPI — authentication and ownership checks
 In local processing mode, the application loads one model session during startup
 and reuses it across processing jobs. Disabled processing mode starts the API
 without importing the inference package or loading a model. Queued mode also starts
-without a model and accepts durable pending jobs for a future separate dispatcher.
+without a model and accepts durable pending jobs for a separate dispatcher. A
+one-cycle local fake runner currently exercises authorization and contact only.
 
 Users own uploads. Job and output ownership is derived through the associated upload. Alembic manages database schema changes.
 
@@ -226,9 +227,40 @@ authentication, and the unfinished-job allowance still apply. Replaying a receip
 returns the original job even if the API's processing mode has changed; it does
 not change that job's backend or schedule it again.
 
-The dispatcher/worker command is not implemented yet, so these jobs remain
-pending and count toward the allowance. Use queued mode only for development
-verification until the runner is connected. Pending output downloads return 409.
+Queued jobs remain pending until a dispatcher reserves and submits them. The
+current local fake runner exercises coordination only: it authorizes one invocation
+and reports contact, leaving the job processing without generating stems.
+Pending/processing jobs count toward the allowance and cannot serve outputs (409).
+Queued mode remains a development exercise until inference/publication is connected.
+
+### Local dispatcher coordination exercise
+
+After applying migrations, a dispatcher can run separately from the API. From
+`backend`, with the same absolute `ISOJAM_DATABASE_PATH` as the queued API:
+
+```bash
+python -m app.dispatcher --once --adapter local-fake
+```
+
+This explicitly runs one cycle: commit reservation, commit submission intent,
+then start `python -m app.fake_worker` as a separate child. The fake worker reads
+its validated invocation from standard input, obtains permission and records one
+heartbeat. Neither command starts FastAPI or loads the inference model. The local
+adapter uses the shared SQLite file on the same host; it is not remote GPU control.
+
+The dispatcher prints one JSON report. `worker_contact_recorded` means coordination
+succeeded, not that separation completed. `idle` means no eligible work or occupied
+capacity. Successful fake contact leaves the job processing and its attempt running;
+subsequent cycles stay idle because result publication is not implemented yet.
+Use disposable data for this intermediate exercise. For a fully isolated container
+exercise that creates and removes its own volume, see [Containers](docs/containers.md).
+
+Launch/report errors print `submission_unresolved` and preserve existing attempt
+state. There is no automatic resubmission, timeout-based release, terminal transition,
+expired-reservation scanner or polling loop yet. CLI defaults are 60 seconds for
+pre-submission ownership, 300 for receiving execution permission, 30 for the local
+fake-child wait, and 1000 milliseconds for each SQLite lock wait. The child timeout
+is specific to this fake transport; it is not a GPU execution-time limit.
 
 ## Running
 
