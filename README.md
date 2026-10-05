@@ -287,6 +287,29 @@ Send `POST /jobs` with the upload ID:
 
 The upload must belong to the authenticated user. The response contains a job ID.
 
+For retry-safe submission, include an optional header:
+
+```http
+Idempotency-Key: <new-unique-key-for-this-submission>
+```
+
+Generate the key before sending the request, and reuse it if the response is lost
+or the request must be retried. A UUID is suitable. Keys are case-sensitive, scoped
+to the authenticated user, and accept 1-128 ASCII letters, digits, `.`, `_`, `:`,
+and `-`; invalid keys return `422`.
+
+The same key and upload return the original job ID with its current status and
+output URLs, without creating or scheduling another job. A replay still succeeds
+when the user's unfinished-job allowance is full or processing has been disabled.
+Reusing a key for a different owned upload returns `409`. Use a new key to request
+a separate job, even for the same upload. Omitting the header keeps the original
+behavior: each successful submission creates a new job.
+
+Receipts are persisted without automatic expiry. Job and receipt commit together;
+replaying an accepted submission does not recover interrupted background work.
+Recovery is part of the planned worker system. Downgrading the receipt migration
+keeps jobs/results but removes stored keys and therefore their replay protection.
+
 Each user can have at most two unfinished jobs by default, counting both `pending`
 and `processing` jobs across all their uploads. At the limit, submission returns
 `429` without creating or dispatching a job. Completed and failed jobs do not count.

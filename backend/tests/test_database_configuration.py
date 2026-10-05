@@ -60,6 +60,8 @@ def test_migrations_and_restarted_application_use_configured_database(
         "uploads",
         "jobs",
         "job_outputs",
+        "job_attempts",
+        "job_submission_receipts",
     }
     engine.dispose()
 

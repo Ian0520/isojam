@@ -3,7 +3,7 @@ from uuid import UUID, uuid4
 from sqlalchemy import func, insert, literal, select
 from sqlalchemy.orm import Session
 
-from app.db_models import Job, Upload
+from app.db_models import Job, JobSubmissionReceipt, Upload
 
 ALLOWED_STATUSES = {"pending", "processing", "completed", "failed"}
 
@@ -41,11 +41,15 @@ def create_job_with_limit(
     user_id: UUID,
     *,
     max_unfinished_jobs: int,
+    submission_key: str | None = None,
 ) -> Job | None:
     """Atomically admit a job under the user's allowance on SQLite.
 
     SQLite serializes writes, so this statement counts after earlier writers
-    commit. Revisit locking/isolation if the database backend changes.
+    commit. A keyed insert also excludes an already committed receipt. Holding
+    this write transaction until the new receipt is flushed/committed makes
+    simultaneous submissions converge without a count-then-insert race.
+    Revisit locking/isolation if the database backend changes.
     """
     unfinished_count = (
         select(func.count())
@@ -62,6 +66,16 @@ def create_job_with_limit(
         Upload.user_id == user_id,
         unfinished_count < max_unfinished_jobs,
     )
+    if submission_key is not None:
+        receipt_exists = (
+            select(JobSubmissionReceipt.user_id)
+            .where(
+                JobSubmissionReceipt.user_id == user_id,
+                JobSubmissionReceipt.key == submission_key,
+            )
+            .exists()
+        )
+        candidate = candidate.where(~receipt_exists)
     statement = (
         insert(Job).from_select(["id", "upload_id", "status"], candidate).returning(Job)
     )
