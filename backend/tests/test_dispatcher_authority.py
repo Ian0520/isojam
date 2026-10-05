@@ -1,7 +1,6 @@
 import multiprocessing
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
-from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
@@ -12,26 +11,6 @@ from sqlalchemy.orm import Session
 from app.database import enable_sqlite_foreign_keys
 from app.db_models import Job, JobAttempt
 from app.repositories import job_reservations as reservations
-from tests.factories import create_test_upload, create_test_user
-
-
-@pytest.fixture
-def clock(monkeypatch):
-    clock = SimpleNamespace(now=datetime(2026, 1, 1, tzinfo=UTC))
-    monkeypatch.setattr(reservations, "_utc_now", lambda: clock.now)
-    return clock
-
-
-@pytest.fixture
-def owned_reservation(reservation_engine, clock):
-    with Session(reservation_engine) as session:
-        user = create_test_user(session)
-        upload = create_test_upload(session, user)
-        session.add(
-            Job(upload_id=upload.id, status="pending", execution_backend="queued")
-        )
-        session.commit()
-    return reservations.reserve_next_job(reservation_engine, dispatcher_id=uuid4())
 
 
 def stored_attempt(engine, reservation):

@@ -531,6 +531,77 @@ fixture is shared by both reservation and authority tests. All databases/audio
 used in verification were disposable; no development database or exercise volume
 was migrated.
 
+### Implemented slice: worker execution authorization (2026-10-05)
+
+This is stage one of the `feat/worker-execution-control` feature branch. Stage two
+will add guarded heartbeat records on the same branch, with a separate tested
+commit and learning review. Open the feature PR after both stages are complete.
+
+Attempts now store a nullable invocation UUID and a nullable UTC execution
+authorization deadline (`execution_authorization_expires_at`). An invocation ID
+belongs to one worker execution, not a reusable worker process or provider request.
+Its database uniqueness prevents reuse across attempts. Authority constraints
+require owned dispatcher metadata for a deadline, and a deadline/start timestamp
+and permitted lifecycle phase for an invocation. Historical attempts may retain
+null execution fields, including old running/terminal rows. Migration
+`e4f21c8a906b` preserves previous dispatcher authority, records, timestamps,
+receipts and output paths without inventing an invocation or deadline. Old
+submission intent without a deadline cannot obtain new execution permission.
+Stop control and worker processes before migrating; downgrade removes execution
+evidence and cannot cancel an actual worker.
+
+`begin_submission(..., authorization_ttl_seconds=300)` now commits the execution
+authorization deadline with submission intent. Integer seconds from 1 to 3600
+are accepted; 300 is a provisional default pending provider measurements. This
+is distinct from pre-submission reservation expiry. A repeated submission call
+does not refresh it. Passing either deadline is not proof that previously
+accepted or authorized execution has stopped.
+
+`authorize_execution(engine, reservation, invocation_id=...)` is a trusted internal
+repository operation, not a user route or authenticated remote control API. It
+checks the current pending queued job/attempt, dispatcher owner/generation, an
+unexpired persisted execution deadline, an unassigned invocation, and absent
+start/finish records. The accepted pre-execution phases are submitting, submitted
+and uncertain: a valid worker may arrive before provider acknowledgement, or after
+its response was lost. Reserved, running, result-ready and terminal phases cannot
+receive a new grant. A superseded attempt cannot execute.
+
+Permission uses one short SQLite write transaction, with time sampled after lock
+acquisition. The winning invocation is recorded, the attempt becomes running with
+its control-side start time, and the public job becomes processing. Both updates
+commit together before True is returned. A failed attempt/job write or commit
+rolls both back. Processing means execution has been authorized, not proof that
+a model is currently computing; the worker command and heartbeats follow later.
+The existing global slot remains occupied after authorization and after expiry.
+
+Only the first successful call returns True. Duplicate requests (including the
+same invocation UUID), conflicting invocations, reused IDs, expired deadlines or
+stale authority return False and grant no further execution. Workers must infer
+only after receiving the initial True. If permission commits but the worker loses
+its acknowledgement, it must not infer on a repeated call; persisted authority
+remains occupied for later reconciliation. This deliberately distinguishes stable
+state under repeated requests from repeated execution permission. It does not
+claim exactly-once GPU execution or provide recovery by itself.
+
+Tests cover both model-created and Alembic-migrated disposable databases,
+independent worker processes racing with distinct and identical invocation IDs,
+process termination between attempt UPDATE and commit, fresh-engine restart
+persistence, failed job/commit rollback, real BEGIN/COMMIT contention, deadline
+sampling after a simulated lock wait, stale/current identity, duplicate calls,
+invocation reuse/constraints and populated upgrade/downgrade preservation.
+Control-clock and owned-reservation test fixtures are shared with dispatcher tests.
+No dispatcher/worker command, remote endpoint, automatic retry, provider
+reconciliation, heartbeat or output publication is added by this slice. No
+existing development database or exercise volume is migrated by verification.
+
+Validation: all 601 backend tests passed on the host and in a disposable
+locked-runtime container (Python 3.12.14 / SQLAlchemy 2.1.1 / Alembic 1.20.0),
+with tests running as UID 10001. The 101 additional cases include migrated schema
+checks and actual process interruption/concurrency checks. Ruff lint/format passed
+across 66 maintained Python files, retaining the established exclusion of the two
+original generated migrations. The updated CPU image built and pip check passed;
+this library-only slice does not add or claim a real GPU/worker execution smoke.
+
 ## 10. Review and learning checkpoints
 
 This stage is complete when the proposed flow and recovery tradeoffs have been
