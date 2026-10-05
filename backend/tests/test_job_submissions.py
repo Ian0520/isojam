@@ -38,9 +38,9 @@ def submission_session_factory(request, tmp_path, monkeypatch):
         engine.dispose()
 
 
-@pytest.fixture
+@pytest.fixture(params=["local", "queued"])
 def submission_context(
-    submission_session_factory, fake_model_session, jwt_secret_key, monkeypatch
+    request, submission_session_factory, fake_model_session, jwt_secret_key, monkeypatch
 ):
     factory = submission_session_factory
     with factory() as session:
@@ -67,17 +67,25 @@ def submission_context(
         )
         return {"Authorization": f"Bearer {token}", "Idempotency-Key": "request-1"}
 
+    mode = request.param
+    model_factory = Mock(
+        return_value=fake_model_session,
+        side_effect=AssertionError("Queued API must not load a model")
+        if mode == "queued"
+        else None,
+    )
     process = Mock()
     monkeypatch.setattr(job_routes, "process_job", process)
     app = create_app(
-        model_session_factory=lambda: fake_model_session,
+        model_session_factory=model_factory,
         db_session_factory=factory,
         jwt_secret_key=jwt_secret_key,
-        processing_mode="local",
+        processing_mode=mode,
         max_unfinished_jobs_per_user=2,
     )
     with TestClient(app) as client:
         yield SimpleNamespace(
+            mode=mode,
             client=client,
             app=app,
             factory=factory,
@@ -89,6 +97,13 @@ def submission_context(
             headers=headers_for(user_id),
             foreign_headers=headers_for(other_user_id),
         )
+        if mode == "queued":
+            process.assert_not_called()
+            model_factory.assert_not_called()
+
+
+def assert_dispatch_count(context, expected):
+    assert context.process.call_count == (expected if context.mode == "local" else 0)
 
 
 def submit(context, *, upload_id=None, headers=None):
@@ -113,10 +128,11 @@ def test_retry_returns_original_job_without_dispatch(submission_context):
     assert first.status_code == replay.status_code == 200
     assert first.json() == replay.json()
     assert counts(context) == (1, 1)
-    context.process.assert_called_once()
+    assert_dispatch_count(context, 1)
     with context.factory() as session:
         receipt = session.get(JobSubmissionReceipt, (context.user_id, "request-1"))
         assert receipt.job_id == UUID(first.json()["id"])
+        assert session.get(Job, receipt.job_id).execution_backend == context.mode
         assert receipt.created_at.tzinfo is UTC
 
 
@@ -130,7 +146,7 @@ def test_retry_uses_canonical_upload_identity(submission_context):
     )
     assert first.status_code == replay.status_code == 200
     assert replay.json()["id"] == first.json()["id"]
-    context.process.assert_called_once()
+    assert_dispatch_count(context, 1)
 
 
 @pytest.mark.parametrize("status", ["processing", "completed", "failed"])
@@ -153,7 +169,7 @@ def test_retry_returns_current_status_and_outputs(submission_context, status):
         {"guitar": f"/jobs/{job_id}/outputs/guitar"} if status == "completed" else {}
     )
     assert counts(context) == (1, 1)
-    context.process.assert_called_once()
+    assert_dispatch_count(context, 1)
 
 
 def test_retry_works_when_quota_is_full(submission_context):
@@ -175,7 +191,7 @@ def test_retry_works_when_quota_is_full(submission_context):
     assert replay.status_code == 200
     assert replay.json()["id"] == first.json()["id"]
     assert counts(context) == (2, 2)
-    assert context.process.call_count == 2
+    assert_dispatch_count(context, 2)
 
 
 def test_quota_rejection_does_not_consume_key(submission_context):
@@ -195,7 +211,7 @@ def test_quota_rejection_does_not_consume_key(submission_context):
         session.commit()
     assert submit(context, headers=headers).status_code == 200
     assert counts(context) == (3, 3)
-    assert context.process.call_count == 3
+    assert_dispatch_count(context, 3)
 
 
 def test_reusing_key_for_different_request_returns_conflict(submission_context):
@@ -205,7 +221,7 @@ def test_reusing_key_for_different_request_returns_conflict(submission_context):
     assert conflict.status_code == 409
     assert conflict.json()["detail"] == "Idempotency key belongs to another request"
     assert counts(context) == (1, 1)
-    context.process.assert_called_once()
+    assert_dispatch_count(context, 1)
 
 
 def test_keys_are_scoped_to_users(submission_context):
@@ -223,7 +239,7 @@ def test_keys_are_scoped_to_users(submission_context):
         == other.json()["id"]
     )
     assert counts(context) == (2, 2)
-    assert context.process.call_count == 2
+    assert_dispatch_count(context, 2)
 
 
 @pytest.mark.parametrize("key", [None, "another-key", "REQUEST-1"])
@@ -237,7 +253,7 @@ def test_new_or_absent_key_allows_another_job(submission_context, key):
     assert first.status_code == second.status_code == 200
     assert first.json()["id"] != second.json()["id"]
     assert counts(context) == (2, 1 if key is None else 2)
-    assert context.process.call_count == 2
+    assert_dispatch_count(context, 2)
 
 
 def test_unkeyed_requests_preserve_existing_behavior(submission_context):
@@ -247,7 +263,7 @@ def test_unkeyed_requests_preserve_existing_behavior(submission_context):
     assert first.status_code == second.status_code == 200
     assert first.json()["id"] != second.json()["id"]
     assert counts(context) == (2, 0)
-    assert context.process.call_count == 2
+    assert_dispatch_count(context, 2)
 
 
 @pytest.mark.parametrize("key", ["", " ", "has space", "bad/key", "a" * 129])
@@ -266,7 +282,7 @@ def test_valid_key_boundaries_are_accepted(submission_context, key):
     first, replay = submit(context, headers=headers), submit(context, headers=headers)
     assert first.status_code == replay.status_code == 200
     assert first.json()["id"] == replay.json()["id"]
-    context.process.assert_called_once()
+    assert_dispatch_count(context, 1)
 
 
 def test_ownership_and_authentication_are_checked_before_replay(submission_context):
@@ -276,36 +292,49 @@ def test_ownership_and_authentication_are_checked_before_replay(submission_conte
         assert submit(context, upload_id=upload_id).status_code == 404
     assert submit(context, headers={"Idempotency-Key": "request-1"}).status_code == 401
     assert counts(context) == (1, 1)
-    context.process.assert_called_once()
+    assert_dispatch_count(context, 1)
 
 
-def test_replay_survives_api_restart_in_disabled_mode(
-    submission_context, jwt_secret_key
+@pytest.mark.parametrize("restarted_mode", ["local", "queued", "disabled"])
+def test_replay_survives_api_restart_and_processing_mode_change(
+    submission_context, jwt_secret_key, fake_model_session, restarted_mode
 ):
     context = submission_context
     first = submit(context)
-    model_factory = Mock(side_effect=AssertionError("Must not load model"))
+    calls_before_restart = context.process.call_count
+    model_factory = Mock(
+        return_value=fake_model_session,
+        side_effect=AssertionError("Nonlocal mode must not load model")
+        if restarted_mode != "local"
+        else None,
+    )
     restarted_app = create_app(
         db_session_factory=context.factory,
         model_session_factory=model_factory,
         jwt_secret_key=jwt_secret_key,
-        processing_mode="disabled",
+        processing_mode=restarted_mode,
     )
     with TestClient(restarted_app) as restarted:
         replay = restarted.post(
             "/jobs", json={"upload_id": str(context.upload_id)}, headers=context.headers
         )
-        new = restarted.post(
-            "/jobs",
-            json={"upload_id": str(context.upload_id)},
-            headers={**context.headers, "Idempotency-Key": "new-request"},
-        )
+        if restarted_mode == "disabled":
+            new = restarted.post(
+                "/jobs",
+                json={"upload_id": str(context.upload_id)},
+                headers={**context.headers, "Idempotency-Key": "new-request"},
+            )
+            assert new.status_code == 503
     assert replay.status_code == 200
-    assert replay.json()["id"] == first.json()["id"]
-    assert new.status_code == 503
+    assert replay.json() == first.json()
     assert counts(context) == (1, 1)
-    context.process.assert_called_once()
-    model_factory.assert_not_called()
+    assert context.process.call_count == calls_before_restart
+    with context.factory() as session:
+        assert (
+            session.get(Job, UUID(first.json()["id"])).execution_backend == context.mode
+        )
+    if restarted_mode != "local":
+        model_factory.assert_not_called()
 
 
 def test_receipt_failure_rolls_back_job_and_allows_retry(submission_context):
@@ -328,7 +357,7 @@ def test_receipt_failure_rolls_back_job_and_allows_retry(submission_context):
     context.process.assert_not_called()
     assert submit(context).status_code == 200
     assert counts(context) == (1, 1)
-    context.process.assert_called_once()
+    assert_dispatch_count(context, 1)
 
 
 @pytest.mark.parametrize("conflicting_uploads", [False, True])
@@ -369,7 +398,7 @@ def test_simultaneous_retries_converge_at_quota_boundary(
     if not conflicting_uploads:
         assert responses[0].json()["id"] == responses[1].json()["id"]
     assert counts(context) == (2, 1)
-    context.process.assert_called_once()
+    assert_dispatch_count(context, 1)
 
 
 def test_repository_does_not_commit_job_or_receipt(submission_context):

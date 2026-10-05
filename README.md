@@ -9,7 +9,7 @@ This is a backend-focused side project built with FastAPI, SQLAlchemy, and BS-Ro
 - Register and log in with email and password
 - Authenticate requests using short-lived JWT access tokens
 - Upload WAV audio files
-- Create background source-separation jobs
+- Create local background source-separation jobs or persist queued jobs
 - Retrieve processing status and download generated stems
 - Persist users, uploads, jobs, and output metadata in SQLite
 - Restrict uploads, jobs, and downloads to their owners
@@ -21,7 +21,8 @@ The current model produces vocals, drums, bass, guitar, piano, other, and instru
 - Source separation supports WAV input only
 - Audio files are stored on the local filesystem
 - Metadata is stored in SQLite
-- Processing uses in-process FastAPI background tasks
+- Local processing uses in-process FastAPI background tasks
+- Queued mode persists work, but the separate dispatcher/worker is not implemented yet
 - Interrupted jobs are not automatically resumed after a restart
 - Authentication uses access tokens only; refresh tokens are not implemented
 
@@ -37,7 +38,8 @@ FastAPI — authentication and ownership checks
 
 In local processing mode, the application loads one model session during startup
 and reuses it across processing jobs. Disabled processing mode starts the API
-without importing the inference package or loading a model.
+without importing the inference package or loading a model. Queued mode also starts
+without a model and accepts durable pending jobs for a future separate dispatcher.
 
 Users own uploads. Job and output ownership is derived through the associated upload. Alembic manages database schema changes.
 
@@ -79,7 +81,7 @@ python -m pip install --no-deps --no-build-isolation .
 python -m pip check
 ```
 
-Then select disabled processing mode as described below. The inference extra
+Then select disabled or queued processing mode as described below. The inference extra
 contains the model package and its GPU inference dependencies. These CPU locks
 do not cover the GPU environment. See [Python Runtime](docs/python-runtime.md)
 for the installation flags, target environment, and lock-update workflow.
@@ -192,8 +194,8 @@ contents and duration; multipart overhead does not increase the allowed file siz
 
 ### Configure Processing Mode
 
-`ISOJAM_PROCESSING_MODE` accepts `local` (the default) or `disabled`. Invalid values
-fail startup before model loading.
+`ISOJAM_PROCESSING_MODE` accepts `local` (the default), `disabled`, or `queued`.
+Invalid values fail startup before model loading.
 
 Local mode requires the inference extra and a compatible CUDA environment. The
 model loads once during startup and closes during shutdown. A missing inference
@@ -210,6 +212,23 @@ Health, registration, login, uploads, job status and existing output downloads
 remain available. New processing jobs return `503` without creating a job record
 or scheduling work. This mode does not perform CPU inference or submit jobs to an
 external worker; worker integration is still required for a complete hosted flow.
+
+To accept durable work without loading a model:
+
+```bash
+export ISOJAM_PROCESSING_MODE=queued
+```
+
+Queued mode commits a pending job with `execution_backend="queued"` and returns
+its ID without scheduling a background task. Jobs and optional idempotency
+receipts commit together, and remain available after API replacement. Ownership,
+authentication, and the unfinished-job allowance still apply. Replaying a receipt
+returns the original job even if the API's processing mode has changed; it does
+not change that job's backend or schedule it again.
+
+The dispatcher/worker command is not implemented yet, so these jobs remain
+pending and count toward the allowance. Use queued mode only for development
+verification until the runner is connected. Pending output downloads return 409.
 
 ## Running
 

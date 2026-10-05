@@ -176,7 +176,7 @@ def test_get_processing_mode_defaults_to_local(monkeypatch):
     assert get_processing_mode() == "local"
 
 
-@pytest.mark.parametrize("mode", ["local", "disabled"])
+@pytest.mark.parametrize("mode", ["local", "disabled", "queued"])
 def test_get_processing_mode_reads_environment(monkeypatch, mode):
     monkeypatch.setenv("ISOJAM_PROCESSING_MODE", mode)
     assert get_processing_mode() == mode

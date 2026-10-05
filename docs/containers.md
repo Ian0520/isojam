@@ -1,10 +1,11 @@
 # CPU API container
 
 This image packages the API for Linux x86_64 using Python 3.12.14. It runs in
-`disabled` processing mode and contains no inference or test dependencies.
+`disabled` processing mode by default and contains no inference or test dependencies.
 Authentication, uploads, job status, and existing output downloads remain
 available; new jobs return 503. GPU workers and external job dispatch are later
-milestones.
+milestones. Setting `ISOJAM_PROCESSING_MODE=queued` accepts durable pending jobs
+without loading a model; they remain pending until the dispatcher is implemented.
 
 The repository contains the recipe and application files. `docker build` creates
 an image in Docker's storage; `docker run` creates a container from that image and
@@ -163,6 +164,7 @@ After building the image, run from the repository root:
 
 ```bash
 python3 backend/scripts/smoke_container.py --image isojam-api:local
+python3 backend/scripts/smoke_container.py --image isojam-api:local --processing-mode queued
 ```
 
 This host script uses only Python's standard library and Docker CLI. It generates
@@ -172,11 +174,13 @@ real `.env.container` or use `isojam-data`. It checks:
 - Non-root execution, expected configured paths, matching installed dependency
   versions, absence of inference/test packages, and writable mounted storage.
 - Alembic migrations using the same image and volume as the API.
-- Real HTTP health, registration, login, WAV upload, and authenticated 503 / missing
-  authentication 401 for job submission.
+- Real HTTP health, registration, login, WAV upload, and missing-authentication
+  401 for job submission. Disabled mode checks authenticated 503; queued mode
+  checks pending acceptance, keyed replay, status, and unavailable outputs (409).
 - Clean shutdown followed by removal and recreation of the API container.
-- Login and job ownership lookup after replacement, zero persisted jobs, and
-  unchanged saved WAV bytes in the volume.
+- Login after replacement and unchanged saved WAV bytes in the volume. Disabled
+  mode leaves zero jobs; queued mode preserves one pending queued job and its
+  receipt, without creating an attempt/output or another job on replay.
 
 The script publishes a dynamically allocated port on host loopback and removes
 only resources carrying its run-specific label, including on failure. The built
@@ -213,6 +217,19 @@ Docker reports approximately 366.3 MiB of image size for this build; this is ima
 storage size, not application RAM usage or registry download size. The image is
 available locally as `isojam-api:local`; validation left no API server running.
 These checks do not yet validate remote hosting or GPU processing.
+
+### Queued-mode validation (2026-10-05)
+
+The updated image `isojam-api:queued-check` passed the smoke script in both
+CPU modes. Queued mode preserved one pending job and its receipt through
+replacement, returned the same job on keyed replay, kept outputs unavailable,
+and preserved exact uploaded WAV bytes. No attempt or output was created.
+Disabled mode retained 503 and zero job/receipt behavior. All resources created
+by these smoke runs were removed; existing development/exercise data was unused.
+
+All 742 backend tests passed on the host and in the locked container as UID 10001.
+Host Ruff lint/format passed across 70 maintained Python files. The separate
+runner and GPU execution remain unimplemented.
 
 ## References
 

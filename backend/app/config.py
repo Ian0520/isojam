@@ -6,7 +6,7 @@ ACCESS_TOKEN_EXPIRES_DELTA = timedelta(minutes=30)
 DEFAULT_MAX_UPLOAD_BYTES = 200 * 1024 * 1024
 DEFAULT_MAX_AUDIO_DURATION_SECONDS = 10 * 60
 DEFAULT_MAX_UNFINISHED_JOBS_PER_USER = 2
-PROCESSING_MODES = ("local", "disabled")
+PROCESSING_MODES = ("local", "disabled", "queued")
 
 
 def get_jwt_secret_key() -> str:
@@ -78,5 +78,7 @@ def get_database_path() -> Path:
 def get_processing_mode() -> str:
     mode = os.environ.get("ISOJAM_PROCESSING_MODE", "local")
     if mode not in PROCESSING_MODES:
-        raise RuntimeError("ISOJAM_PROCESSING_MODE must be 'local' or 'disabled'")
+        raise RuntimeError(
+            "ISOJAM_PROCESSING_MODE must be 'local', 'disabled', or 'queued'"
+        )
     return mode

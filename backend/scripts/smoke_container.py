@@ -88,6 +88,9 @@ def make_wav():
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--image", default="isojam-api:local")
+    parser.add_argument(
+        "--processing-mode", choices=["disabled", "queued"], default="disabled"
+    )
     args = parser.parse_args()
     if shutil.which("docker") is None:
         parser.error("Docker is unavailable. Start Docker and enable WSL integration.")
@@ -111,6 +114,8 @@ def main():
         f"{LABEL}={marker}",
         "--env",
         "ISOJAM_JWT_SECRET_KEY",
+        "--env",
+        f"ISOJAM_PROCESSING_MODE={args.processing_mode}",
         "--mount",
         f"type=volume,src={volume},dst=/var/lib/isojam",
     ]
@@ -125,7 +130,7 @@ from pathlib import Path
 import re
 
 assert os.getuid() == 10001
-assert os.environ['ISOJAM_PROCESSING_MODE'] == 'disabled'
+assert os.environ['ISOJAM_PROCESSING_MODE'] in {'disabled', 'queued'}
 assert os.environ['ISOJAM_DATABASE_PATH'] == '/var/lib/isojam/metadata/isojam.db'
 assert os.environ['ISOJAM_AUDIO_STORAGE_DIR'] == '/var/lib/isojam/audio'
 for package in ['torch', 'bs_roformer', 'pytest', 'httpx2', 'ruff']:
@@ -166,6 +171,7 @@ print('Non-root runtime, pinned dependencies, and volume permissions passed')
         }
         payload = make_wav()
         upload_id = None
+        job_id = None
         for phase in ("first-start", "replacement"):
             docker(
                 "run",
@@ -212,12 +218,34 @@ print('Non-root runtime, pinned dependencies, and volume permissions passed')
                 )
                 assert status == 200, f"Upload returned {status}"
                 upload_id = upload["id"]
-            status, _ = post_json(port, "/jobs", {"upload_id": upload_id}, headers)
-            assert status == 503, f"Disabled processing returned {status}"
+            status, job = post_json(
+                port,
+                "/jobs",
+                {"upload_id": upload_id},
+                {**headers, "Idempotency-Key": "container-request"},
+            )
+            if args.processing_mode == "disabled":
+                assert status == 503, f"Disabled processing returned {status}"
+            else:
+                assert status == 200, f"Queued submission returned {status}"
+                assert job["status"] == "pending" and job["outputs"] == {}
+                assert job["upload_id"] == upload_id
+                if job_id is None:
+                    job_id = job["id"]
+                assert job["id"] == job_id, "Replay created a different job"
+                status, current = request(
+                    port, "GET", f"/jobs/{job_id}", headers=headers
+                )
+                assert status == 200 and current == job
+                status, _ = request(
+                    port, "GET", f"/jobs/{job_id}/outputs/guitar", headers=headers
+                )
+                assert status == 409, "Pending outputs must remain unavailable"
             status, _ = post_json(port, "/jobs", {"upload_id": upload_id})
             assert status == 401, f"Unauthenticated job submission returned {status}"
             print(
-                f"{phase}: health, authentication, and job rejection passed", flush=True
+                f"{phase}: health, authentication, and {args.processing_mode} submission passed",
+                flush=True,
             )
             docker("stop", "--time", "10", name)
             state = json.loads(
@@ -235,13 +263,21 @@ import sys
 
 with sqlite3.connect('/var/lib/isojam/metadata/isojam.db') as connection:
     assert connection.execute('select count(*) from users').fetchone()[0] == 1
-    assert connection.execute('select count(*) from jobs').fetchone()[0] == 0
+    queued = sys.argv[3] == 'queued'
+    assert connection.execute('select count(*) from jobs').fetchone()[0] == int(queued)
+    assert connection.execute('select count(*) from job_submission_receipts').fetchone()[0] == int(queued)
+    assert connection.execute('select count(*) from job_attempts').fetchone()[0] == 0
+    assert connection.execute('select count(*) from job_outputs').fetchone()[0] == 0
+    if queued:
+        job_id = sys.argv[4].replace('-', '')
+        assert connection.execute('select status, execution_backend from jobs where id=?', (job_id,)).fetchone() == ('pending', 'queued')
+        assert connection.execute('select job_id from job_submission_receipts').fetchone()[0] == job_id
     rows = connection.execute('select id, stored_filename from uploads').fetchall()
     assert len(rows) == 1 and rows[0][0] == sys.argv[1].replace('-', '')
     stored = rows[0][1]
 path = Path('/var/lib/isojam/audio/uploads') / stored
 assert hashlib.sha256(path.read_bytes()).hexdigest() == sys.argv[2]
-print('Account, upload metadata, and exact WAV bytes survived container replacement')
+print('Account, upload, job/receipt state, and exact WAV bytes survived container replacement')
 """
         result = docker(
             "run",
@@ -253,6 +289,8 @@ print('Account, upload metadata, and exact WAV bytes survived container replacem
             persistence_check,
             upload_id,
             hashlib.sha256(payload).hexdigest(),
+            args.processing_mode,
+            job_id or "",
             env=env,
         )
         print(result.stdout.strip(), flush=True)

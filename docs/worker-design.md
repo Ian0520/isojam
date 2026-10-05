@@ -654,6 +654,60 @@ no development database or exercise volume was migrated. This adds no sending
 loop, dispatcher/worker command, authenticated remote endpoint, provider
 reconciliation, automatic replacement or real GPU execution smoke.
 
+### Implemented slice: queued API acceptance (2026-10-05)
+
+This is stage one of `feat/queued-execution`. Keep this branch open for the
+related dispatcher/fake-worker and output publication stages, with tested commits
+and learning reviews between them. Queued acceptance alone is not a complete
+worker system or a ready hosted separation service.
+
+`ISOJAM_PROCESSING_MODE` and injected configuration now accept queued in addition
+to local/disabled. Both CPU modes skip model construction and inference imports;
+local remains the default and the Docker image still defaults to disabled.
+Invalid configuration fails before model loading.
+
+In queued mode, POST /jobs authenticates the user, verifies upload ownership,
+enforces the shared unfinished-job allowance, and commits a pending queued job
+with its optional submission receipt before returning the existing 200 response.
+The atomic conditional INSERT now includes the selected backend explicitly.
+The API creates no attempt and schedules no background inference for queued work.
+Pending downloads remain unavailable (409). No schema migration is required:
+the execution_backend column and its constraint already exist.
+
+Backend selection is server configuration, not a new user processing option.
+Receipt fingerprints therefore remain unchanged. Keyed replay returns the
+original job/status/backend across local, queued and disabled API replacements;
+it never converts or reschedules existing work. Concurrent retries and full-quota
+replay retain the previous atomic admission semantics. Local and queued unfinished
+jobs both count toward the same per-user allowance.
+
+A failed-commit check exposed SQLite transaction state retained on a pooled
+connection after SQLAlchemy marked its transaction inactive. Job acceptance now
+uses commit_session: retain the owned driver reference, attempt commit, and on
+failure roll back the driver before clearing session state and propagating the
+error. This prevents another request from reusing uncommitted job/receipt state.
+Tests cover an injected commit failure and an actual reader-blocked SQLite COMMIT,
+checking both a reused pool and a fresh engine, then successful keyed retry.
+
+Submission tests now run in local and queued modes against model-created and
+migrated schemas, covering authentication/ownership, quotas, key validation,
+conflicts, receipt failure and concurrent replay. Additional acceptance tests
+upload real small WAVs, shut down the accepting API, open a fresh engine/app,
+replay the request, and discover the committed job through reserve_next_job.
+The existing CPU import boundary test also covers queued mode.
+
+Validation: 742 backend tests passed on the host and in a disposable locked
+runtime (Python 3.12.14 / SQLAlchemy 2.1.1 / Alembic 1.20.0) as UID 10001. Ruff
+lint/format passed across 70 maintained Python files, excluding the two original
+generated migrations as before. The CPU image built and pip check passed. The
+real HTTP container smoke passed in both disabled and queued modes; queued mode
+preserved one pending job/receipt and exact WAV bytes through container replacement
+without another job, attempt, output or inference dependency. Disposable labeled
+containers/volumes were removed; development data and the exercise volume were
+not used. The runner is not yet implemented, so queued jobs remain pending and
+consume quota until later execution is connected. No production mode is enabled
+implicitly, and no GPU/provider/remote-host execution is claimed.
+
 ## 10. Review and learning checkpoints
 
 This stage is complete when the proposed flow and recovery tradeoffs have been
