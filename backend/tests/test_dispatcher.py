@@ -138,12 +138,12 @@ def test_failed_authority_commit_never_launches_worker(
     reservation_engine, queued_job, fail_at
 ):
     adapter = Mock()
-    commits = 0
 
     def fail_commit(connection):
-        nonlocal commits
-        commits += 1
-        if commits == fail_at:
+        phase = connection.scalar(
+            select(JobAttempt.phase).where(JobAttempt.job_id == queued_job)
+        )
+        if phase == ("reserved" if fail_at == 1 else "submitting"):
             raise RuntimeError("authority commit failed")
 
     event.listen(reservation_engine, "commit", fail_commit)
@@ -181,7 +181,7 @@ def test_worker_permission_denial_does_not_record_contact_or_release_capacity(
 
     result = dispatch_once(
         reservation_engine,
-        SimpleNamespace(submit=expire_then_submit),
+        SimpleNamespace(submit=expire_then_submit, results=adapter.results),
         dispatcher_id=uuid4(),
     )
     assert result.status == "worker_permission_denied"
@@ -212,7 +212,7 @@ def test_lost_report_after_worker_contact_preserves_running_attempt_and_never_re
         assert real_adapter.submit(invocation).status == "result_ready"
         raise WorkerLaunchError("report lost after contact")
 
-    adapter = SimpleNamespace(submit=lose_report)
+    adapter = SimpleNamespace(submit=lose_report, results=real_adapter.results)
     result = dispatch_once(reservation_engine, adapter, dispatcher_id=uuid4())
     assert result.status == "submission_unresolved"
     attempt, job = attempt_state(reservation_engine, queued_job)
@@ -223,8 +223,9 @@ def test_lost_report_after_worker_contact_preserves_running_attempt_and_never_re
     assert job.status == "processing"
     assert (
         dispatch_once(reservation_engine, adapter, dispatcher_id=uuid4()).status
-        == "idle"
+        == "recovered"
     )
+    assert attempt_state(reservation_engine, queued_job)[1].status == "completed"
     assert len(deliveries) == 1
     assert (
         len(real_adapter.results.verify_bundle(deliveries[0].result_identity()).outputs)
@@ -252,7 +253,7 @@ def test_spawn_failure_preserves_submission_intent_and_never_retries(
     launch.assert_called_once()
 
 
-def test_timeout_kills_and_waits_for_direct_child_but_does_not_publish_or_free_slot(
+def test_timeout_holds_slot_until_valid_saved_bundle_is_reconciled(
     reservation_engine,
     queued_job,
     monkeypatch,
@@ -305,10 +306,13 @@ time.sleep(30)
         )
         == 7
     )
+    no_launch = Mock(results=LocalFakeWorkerAdapter(reservation_engine).results)
     assert (
-        dispatch_once(reservation_engine, Mock(), dispatcher_id=uuid4()).status
-        == "idle"
+        dispatch_once(reservation_engine, no_launch, dispatcher_id=uuid4()).status
+        == "recovered"
     )
+    no_launch.submit.assert_not_called()
+    assert attempt_state(reservation_engine, queued_job)[1].status == "completed"
 
 
 def competing_dispatcher(database_url, barrier, results):
@@ -506,13 +510,13 @@ def test_publication_commit_failure_keeps_bundle_and_slot_and_retry_does_not_lau
         deliveries.append(invocation)
         return adapter.submit(invocation)
 
-    commits = 0
-
     def fail_publication_commit(connection):
-        nonlocal commits
-        commits += 1
-        # Reservation, submission intent, and stop evidence precede publication.
-        if commits == 4:
+        selected = connection.scalar(
+            select(JobAttempt.result_manifest_key).where(
+                JobAttempt.job_id == queued_job
+            )
+        )
+        if selected is not None:
             raise RuntimeError("publication commit failed")
 
     event.listen(reservation_engine, "commit", fail_publication_commit)
@@ -532,10 +536,10 @@ def test_publication_commit_failure_keeps_bundle_and_slot_and_retry_does_not_lau
     assert attempt.execution_exit_code == 0
     with Session(reservation_engine) as session:
         assert session.scalar(select(func.count()).select_from(JobOutput)) == 0
-    no_launch = Mock()
+    no_launch = Mock(results=adapter.results)
     assert (
         dispatch_once(reservation_engine, no_launch, dispatcher_id=uuid4()).status
-        == "idle"
+        == "recovered"
     )
     no_launch.submit.assert_not_called()
     invocation = deliveries[0]
@@ -552,7 +556,7 @@ def test_publication_commit_failure_keeps_bundle_and_slot_and_retry_does_not_lau
 @pytest.mark.parametrize(
     "change", ["missing_file", "stale_owner", "conflicting_outputs"]
 )
-def test_result_change_before_publication_does_not_complete_or_release_attempt(
+def test_result_change_blocks_initial_publication_and_recovery_rechecks_current_state(
     reservation_engine, queued_job, change
 ):
     real_adapter = LocalFakeWorkerAdapter(reservation_engine)
@@ -591,10 +595,11 @@ def test_result_change_before_publication_does_not_complete_or_release_attempt(
     attempt, job = attempt_state(reservation_engine, queued_job)
     assert attempt.phase == "running" and attempt.finished_at is None
     assert attempt.result_manifest_key is None and job.status == "processing"
-    no_launch = Mock()
+    no_launch = Mock(results=real_adapter.results)
+    expected_recovery = "recovered" if change == "stale_owner" else expected[change]
     assert (
         dispatch_once(reservation_engine, no_launch, dispatcher_id=uuid4()).status
-        == "idle"
+        == expected_recovery
     )
     no_launch.submit.assert_not_called()
 
@@ -603,12 +608,14 @@ def test_stop_commit_failure_keeps_files_but_prevents_publication_and_new_execut
     reservation_engine, queued_job
 ):
     adapter = LocalFakeWorkerAdapter(reservation_engine)
-    commits = 0
 
     def fail_stop_commit(connection):
-        nonlocal commits
-        commits += 1
-        if commits == 3:
+        stopped = connection.scalar(
+            select(JobAttempt.execution_stopped_at).where(
+                JobAttempt.job_id == queued_job
+            )
+        )
+        if stopped is not None:
             raise RuntimeError("stop evidence commit failed")
 
     event.listen(reservation_engine, "commit", fail_stop_commit)

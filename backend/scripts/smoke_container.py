@@ -92,9 +92,16 @@ def main():
         "--processing-mode", choices=["disabled", "queued"], default="disabled"
     )
     parser.add_argument("--dispatch-fake-worker", action="store_true")
+    parser.add_argument(
+        "--recover-publication",
+        action="store_true",
+        help="Interrupt publication and recover using a fresh dispatcher container",
+    )
     args = parser.parse_args()
     if args.dispatch_fake_worker and args.processing_mode != "queued":
         parser.error("--dispatch-fake-worker requires --processing-mode queued")
+    if args.recover_publication and not args.dispatch_fake_worker:
+        parser.error("--recover-publication requires --dispatch-fake-worker")
     if shutil.which("docker") is None:
         parser.error("Docker is unavailable. Start Docker and enable WSL integration.")
     docker("version", "--format", "{{.Server.Version}}")
@@ -306,15 +313,89 @@ print('Account, upload, job/receipt state, and exact WAV bytes survived containe
                 "--adapter",
                 "local-fake",
             ]
-            dispatched = docker("run", "--rm", *common, args.image, *command, env=env)
+            interrupted_report = None
+            if args.recover_publication:
+                interrupt_publication = """
+import json
+from dataclasses import asdict
+from uuid import uuid4
+from sqlalchemy import event, select
+from app.database import engine
+from app.db_models import Job, JobAttempt, JobOutput
+from app.dispatcher import dispatch_once
+from app.execution import LocalFakeWorkerAdapter
+
+def fail_publication(connection):
+    if connection.scalar(select(JobAttempt.result_manifest_key)) is not None:
+        raise RuntimeError('Intentional smoke-test publication failure')
+
+event.listen(engine, 'commit', fail_publication)
+try:
+    result = dispatch_once(engine, LocalFakeWorkerAdapter(engine), dispatcher_id=uuid4())
+finally:
+    event.remove(engine, 'commit', fail_publication)
+assert result.status == 'publication_unresolved'
+with engine.connect() as connection:
+    attempt = connection.execute(select(JobAttempt.__table__)).one()
+    assert attempt.phase == 'running' and attempt.execution_stopped_at is not None
+    assert connection.scalar(select(Job.status)) == 'processing'
+    assert connection.execute(select(JobOutput.__table__)).all() == []
+    report = dict(asdict(result), local_worker_id=str(attempt.local_worker_id),
+                  execution_stopped_at=attempt.execution_stopped_at.isoformat())
+engine.dispose()
+print(json.dumps(report, default=str))
+"""
+                interrupted = docker(
+                    "run",
+                    "--rm",
+                    *common,
+                    args.image,
+                    "python",
+                    "-c",
+                    interrupt_publication,
+                    env=env,
+                )
+                interrupted_report = json.loads(interrupted.stdout)
+                assert interrupted_report["status"] == "publication_unresolved"
+                dispatched = docker(
+                    "run",
+                    "--rm",
+                    *common,
+                    args.image,
+                    *command,
+                    "--reconcile-only",
+                    env=env,
+                )
+            else:
+                dispatched = docker(
+                    "run", "--rm", *common, args.image, *command, env=env
+                )
             report = json.loads(dispatched.stdout)
-            assert report["status"] == "completed"
+            assert report["status"] == (
+                "recovered" if args.recover_publication else "completed"
+            )
+            if interrupted_report:
+                for key in (
+                    "job_id",
+                    "attempt_id",
+                    "invocation_id",
+                    "worker_pid",
+                    "manifest_key",
+                ):
+                    assert report[key] == interrupted_report[key]
+                print(
+                    "Fresh dispatcher recovered interrupted publication without a new execution",
+                    flush=True,
+                )
             assert report["job_id"] == job_id and report["worker_pid"] > 1
             assert report["manifest_key"].endswith("/manifest.json")
             repeated = docker("run", "--rm", *common, args.image, *command, env=env)
             assert json.loads(repeated.stdout)["status"] == "idle"
             dispatch_check = """
 import sqlite3
+import sys
+from uuid import UUID
+from datetime import datetime
 from pathlib import Path
 from app.results import LocalResultStore, ResultIdentity, FAKE_RESULT_PROFILE
 with sqlite3.connect('/var/lib/isojam/metadata/isojam.db') as connection:
@@ -326,7 +407,10 @@ with sqlite3.connect('/var/lib/isojam/metadata/isojam.db') as connection:
     assert started is not None and heartbeat >= started and stopped >= heartbeat
     assert finished >= stopped and exit_code == 0
     worker_id, worker_pid = connection.execute('select local_worker_id, local_worker_pid from job_attempts').fetchone()
-    assert __import__('uuid').UUID(worker_id) and worker_pid > 1
+    assert UUID(worker_id) and worker_pid > 1
+    if sys.argv[1]:
+        assert UUID(worker_id) == UUID(sys.argv[1])
+        assert datetime.fromisoformat(stopped) == datetime.fromisoformat(sys.argv[2]).replace(tzinfo=None)
     assert connection.execute('select count(*) from job_outputs').fetchone()[0] == 7
     selected_key, selected_hash = connection.execute('select result_manifest_key, result_manifest_sha256 from job_attempts').fetchone()
     output_rows = dict(connection.execute('select stem, path from job_outputs').fetchall())
@@ -347,6 +431,10 @@ print(__import__('json').dumps({artifact.stem: artifact.sha256 for artifact in b
                 "python",
                 "-c",
                 dispatch_check,
+                interrupted_report["local_worker_id"] if interrupted_report else "",
+                interrupted_report["execution_stopped_at"]
+                if interrupted_report
+                else "",
                 env=env,
             )
             lines = checked.stdout.strip().splitlines()

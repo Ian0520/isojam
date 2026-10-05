@@ -1083,3 +1083,83 @@ exercise volume remained present. Every migration check used disposable storage.
 
 Stage 4A is committed separately on feat/worker-recovery. Restart reconciliation
 will follow on this same feature branch before the user-opened pull request.
+
+
+### Implemented slice: bounded restart publication recovery (Stage 4B)
+
+Stage 4B completes feat/worker-recovery. The dispatcher can repair publication
+from saved stop proof and a verified fake bundle after controller restart. It
+preserves the original job/attempt/invocation, execution ownership/generation,
+launch identity and stop timestamps. No migration or new runtime dependency is
+needed beyond Stage 4A's b5d8f3027a91 migration.
+
+find_recoverable_attempt inspects at most one owned, latest, running/unfinished
+attempt for a processing queued job. An authorized start/invocation and a complete
+stop/exit pair are required. A short read transaction bounds SQLite contention
+and releases its connection before filesystem verification. Inspection obtains no writer reservation; the
+publication transition still uses BEGIN IMMEDIATE.
+The returned frozen RecoverableAttempt is a snapshot, not a new execution grant,
+publication reservation or transfer of ownership. Inspectors may see the same row.
+
+reconcile_once verifies the expected identity/profile through the existing
+publish_result path, then uses guarded atomic publication. Normal delivery and
+recovery share the same publication-status handling. Current identity, owner,
+generation, latest attempt, stop proof and public state are checked again under
+BEGIN IMMEDIATE. If another controller already committed the same result, the
+existing identical-publication acknowledgement succeeds without rewriting rows
+or timestamps. Changed authority is denied; conflicting publication is reported,
+not overwritten. No hashing, decoding or worker work occurs under the write lock.
+
+A successful pass returns recovered, with the original identifiers, saved worker
+PID and canonical manifest key. result_invalid, publication_denied,
+publication_conflict and publication_unresolved preserve the current state and
+end the pass. SQLite contention propagates database_busy (CLI exit 75); the caller
+may try the publication pass later. No eligible candidate returns None internally.
+
+The normal --once dispatcher tries one recovery before reserving new work. Any
+candidate outcome ends the cycle: it never both recovers an old job and launches a
+new one. If no candidate qualifies, ordinary reservation still respects all
+occupied queued attempts. A proof committed after lookup may wait until the next
+cycle; it cannot cause a second inference. Successful recovery frees capacity for
+the next normal cycle.
+
+--reconcile-only requests just this bounded recovery pass; it never submits new
+work. CLI completed/recovered/idle exit zero. Here idle includes pending new jobs
+and occupied attempts without stop proof; it is not a claim that no execution is
+running. Missing proof cannot be inferred from deadline expiry, heartbeat age or
+manifest presence. Missing/invalid bundles retain the occupied attempt. Retiring
+failed work, authorizing inference retries, scanning expired pre-submission
+reservations, periodic loops, remote provider inspection and GPU execution remain
+separate work. Recovery currently supports the explicit local fake profile/store.
+
+Tests include actual child exit plus interrupted publication, disposal of the
+original engine, recovery with a fresh controller, unchanged saved file bytes and
+inodes, one original attempt/invocation/owner, recovery before another pending job,
+CLI-only recovery without submission, missing proof, terminal/local/stale/unowned
+states, damaged files, authority changes during verification, write-lock release,
+failed publication commits and real SQLite reader-blocked COMMIT rollback. Two
+independent recovery processes rendezvous after verification and acknowledge one
+atomic publication. Lookup contention and the CLI retain bounded waits/exit 75.
+
+General lesson: reconciliation completes an unfinished transition using durable
+facts. Make that transition idempotent and recheck mutable authority at commit;
+a stale snapshot is not permission to publish. Short read-only inspection, file
+verification and atomic publication are separate steps, so competing controllers can safely
+converge on the same result without repeating computation.
+
+
+Stage verification: 1,061 tests passed on the host and 1,061 under locked CPU
+runtime dependencies as UID 10001 (Python 3.12.14, SQLAlchemy 2.1.1, Alembic 1.20.0).
+All 85 maintained Python files passed Ruff lint/format checks. The rebuilt
+isojam-api:recovery-check image passed the isolated queued smoke with
+--dispatch-fake-worker --recover-publication: intentionally interrupted publication
+left zero output rows and saved stop proof; a fresh dispatcher container recovered
+the same job/attempt/invocation/PID and preserved launch UUID and stop timestamp.
+The restarted API served all seven WAVs with exact published hashes and keyed
+submission replay returned the completed job. A second cycle stayed idle.
+Verification used disposable storage and cleaned up its labeled containers/volume;
+the existing isojam-exercise-data volume was preserved.
+
+The two learning-stage commits complete feat/worker-recovery for a user-opened PR.
+Unknown termination, invalid-bundle retirement, remote provider control/storage,
+real GPU execution and hosted deployment remain separate milestones.

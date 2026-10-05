@@ -29,9 +29,18 @@ class JobReservation:
     reservation_expires_at: datetime
 
 
+@dataclass(frozen=True)
+class RecoverableAttempt:
+    """Snapshot for publication repair; never a new execution grant or owner."""
+
+    reservation: JobReservation
+    invocation_id: UUID
+    worker_pid: int | None
+
+
 @contextmanager
 def _reservation_transaction(
-    engine: Engine, busy_timeout_ms: int
+    engine: Engine, busy_timeout_ms: int, *, write: bool = True
 ) -> Iterator[Connection]:
     if engine.dialect.name != "sqlite":
         raise ValueError("Job reservation currently supports SQLite only")
@@ -52,7 +61,7 @@ def _reservation_transaction(
         try:
             # PRAGMA does not support bound parameters; the caller validated int.
             connection.exec_driver_sql(f"PRAGMA busy_timeout = {busy_timeout_ms}")
-            connection.exec_driver_sql("BEGIN IMMEDIATE")
+            connection.exec_driver_sql("BEGIN IMMEDIATE" if write else "BEGIN")
             yield connection
             connection.commit()
         except OperationalError as error:
@@ -184,6 +193,52 @@ def _current_queued_attempt(job_status: str) -> ColumnElement[bool]:
         .exists()
     )
     return eligible_job & ~has_newer_attempt
+
+
+def find_recoverable_attempt(
+    engine: Engine,
+    *,
+    busy_timeout_ms: int = 1000,
+) -> RecoverableAttempt | None:
+    """Inspect at most one current unfinished queued attempt with saved stop proof.
+
+    The short read transaction releases its connection before any file
+    verification. This snapshot does not claim execution, transfer ownership or
+    change rows. Publication must recheck its authority; concurrent inspectors
+    may see the same candidate and safely acknowledge identical publication.
+    Missing proof, terminal/stale/unowned attempts and local jobs are excluded.
+    Start/reservation deadline expiry is irrelevant to an already stopped worker.
+    """
+    with _reservation_transaction(engine, busy_timeout_ms, write=False) as connection:
+        row = connection.execute(
+            select(
+                JobAttempt.job_id,
+                JobAttempt.id,
+                JobAttempt.attempt_number,
+                JobAttempt.dispatcher_id,
+                JobAttempt.dispatcher_generation,
+                JobAttempt.reservation_expires_at,
+                JobAttempt.invocation_id,
+                JobAttempt.local_worker_pid,
+            )
+            .where(
+                JobAttempt.phase == "running",
+                JobAttempt.started_at.is_not(None),
+                JobAttempt.finished_at.is_(None),
+                JobAttempt.execution_stopped_at.is_not(None),
+                JobAttempt.execution_exit_code.is_not(None),
+                JobAttempt.invocation_id.is_not(None),
+                JobAttempt.dispatcher_id.is_not(None),
+                JobAttempt.dispatcher_generation > 0,
+                JobAttempt.reservation_expires_at.is_not(None),
+                _current_queued_attempt("processing"),
+            )
+            .order_by(JobAttempt.execution_stopped_at, JobAttempt.id)
+            .limit(1)
+        ).one_or_none()
+        if row is None:
+            return None
+        return RecoverableAttempt(JobReservation(*row[:6]), row[6], row[7])
 
 
 def reclaim_reservation(

@@ -16,7 +16,7 @@ from app.execution import (
 )
 from app.publication import publish_result
 from app.repositories import job_reservations as reservations
-from app.results import ResultValidationError
+from app.results import LocalResultStore, ResultIdentity, ResultValidationError
 
 
 @dataclass(frozen=True)
@@ -29,6 +29,77 @@ class DispatchResult:
     manifest_key: str | None = None
 
 
+def _publication_status(
+    engine: Engine,
+    token: reservations.JobReservation,
+    invocation_id: UUID,
+    store: LocalResultStore,
+    *,
+    busy_timeout_ms: int,
+) -> str:
+    """Keep normal delivery and recovery on the same verification/commit boundary."""
+    try:
+        published = publish_result(
+            engine,
+            token,
+            invocation_id=invocation_id,
+            store=store,
+            busy_timeout_ms=busy_timeout_ms,
+        )
+    except ResultValidationError:
+        return "result_invalid"
+    except reservations.PublicationConflictError:
+        return "publication_conflict"
+    except reservations.ReservationBusyError:
+        raise
+    except Exception:
+        # Preserve files and occupied state. A later cycle may retry publication.
+        return "publication_unresolved"
+    return "completed" if published else "publication_denied"
+
+
+def reconcile_once(
+    engine: Engine,
+    store: LocalResultStore,
+    *,
+    busy_timeout_ms: int = 1000,
+) -> DispatchResult | None:
+    """Recover one saved bundle from a stopped invocation without launching work.
+
+    None means no eligible candidate, including held attempts without exit proof.
+    Any candidate outcome ends this pass; invalid/unresolved results never cause
+    a fall-through to a new execution. The stored owner/generation are a snapshot
+    for publication rechecking, not ownership transferred to this controller.
+    """
+    candidate = reservations.find_recoverable_attempt(
+        engine,
+        busy_timeout_ms=busy_timeout_ms,
+    )
+    if candidate is None:
+        return None
+    token = candidate.reservation
+    identity = ResultIdentity(
+        job_id=token.job_id,
+        attempt_id=token.attempt_id,
+        invocation_id=candidate.invocation_id,
+    )
+    status = _publication_status(
+        engine,
+        token,
+        candidate.invocation_id,
+        store,
+        busy_timeout_ms=busy_timeout_ms,
+    )
+    return DispatchResult(
+        "recovered" if status == "completed" else status,
+        token.job_id,
+        token.attempt_id,
+        candidate.invocation_id,
+        candidate.worker_pid,
+        store.manifest_key(identity),
+    )
+
+
 def dispatch_once(
     engine: Engine,
     adapter: ExecutionAdapter,
@@ -38,19 +109,24 @@ def dispatch_once(
     authorization_ttl_seconds: int = 300,
     busy_timeout_ms: int = 1000,
 ) -> DispatchResult:
-    """Commit authority before delivery, then publish verified successful results.
+    """Recover one stopped attempt, or dispatch one new job and publish its result.
 
     Idle includes no eligible work or an occupied slot. A launch error preserves
     submitting/running evidence for later reconciliation. Only a verified bundle
     from an ended execution can publish output rows and completion together.
     """
-    # Validate both lifetimes before reservation can persist any work.
+    # Validate settings before recovery or reservation can persist any work.
+    if not isinstance(dispatcher_id, UUID):
+        raise ValueError("dispatcher_id must be a UUID")
     for name, value in (
         ("reservation_ttl_seconds", reservation_ttl_seconds),
         ("authorization_ttl_seconds", authorization_ttl_seconds),
     ):
         if type(value) is not int or not 1 <= value <= 3600:
             raise ValueError(f"{name} must be an integer from 1 to 3600")
+    recovered = reconcile_once(engine, adapter.results, busy_timeout_ms=busy_timeout_ms)
+    if recovered is not None:
+        return recovered
     token = reservations.reserve_next_job(
         engine,
         dispatcher_id=dispatcher_id,
@@ -80,26 +156,13 @@ def dispatch_once(
         )
     status = "worker_" + report.status
     if report.status == "result_ready":
-        try:
-            published = publish_result(
-                engine,
-                token,
-                invocation_id=invocation.invocation_id,
-                store=adapter.results,
-                busy_timeout_ms=busy_timeout_ms,
-            )
-        except ResultValidationError:
-            status = "result_invalid"
-        except reservations.PublicationConflictError:
-            status = "publication_conflict"
-        except reservations.ReservationBusyError:
-            raise
-        except Exception:
-            # The worker has already ended. Preserve its bundle and running state
-            # if publication failed; a new dispatch cycle must not resubmit it.
-            status = "publication_unresolved"
-        else:
-            status = "completed" if published else "publication_denied"
+        status = _publication_status(
+            engine,
+            token,
+            invocation.invocation_id,
+            adapter.results,
+            busy_timeout_ms=busy_timeout_ms,
+        )
     return DispatchResult(
         status,
         token.job_id,
@@ -128,6 +191,11 @@ def main() -> int:
     parser.add_argument("--once", action="store_true", required=True)
     parser.add_argument("--adapter", choices=["local-fake"], required=True)
     parser.add_argument(
+        "--reconcile-only",
+        action="store_true",
+        help="Recover at most one stopped attempt without launching a worker",
+    )
+    parser.add_argument(
         "--worker-timeout-seconds", type=_integer_range(1, 60), default=30
     )
     parser.add_argument(
@@ -147,14 +215,21 @@ def main() -> int:
         adapter = LocalFakeWorkerAdapter(
             engine, timeout_seconds=args.worker_timeout_seconds
         )
-        result = dispatch_once(
-            engine,
-            adapter,
-            dispatcher_id=uuid4(),
-            reservation_ttl_seconds=args.reservation_ttl_seconds,
-            authorization_ttl_seconds=args.authorization_ttl_seconds,
-            busy_timeout_ms=args.busy_timeout_ms,
-        )
+        if args.reconcile_only:
+            result = reconcile_once(
+                engine,
+                adapter.results,
+                busy_timeout_ms=args.busy_timeout_ms,
+            ) or DispatchResult("idle")
+        else:
+            result = dispatch_once(
+                engine,
+                adapter,
+                dispatcher_id=uuid4(),
+                reservation_ttl_seconds=args.reservation_ttl_seconds,
+                authorization_ttl_seconds=args.authorization_ttl_seconds,
+                busy_timeout_ms=args.busy_timeout_ms,
+            )
     except reservations.ReservationBusyError:
         print(json.dumps({"status": "database_busy"}))
         return 75
@@ -167,7 +242,7 @@ def main() -> int:
     finally:
         engine.dispose()
     print(json.dumps(asdict(result), default=str))
-    return 0 if result.status in {"idle", "completed"} else 1
+    return 0 if result.status in {"idle", "completed", "recovered"} else 1
 
 
 if __name__ == "__main__":
