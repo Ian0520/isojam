@@ -69,6 +69,12 @@ class JobAttempt(Base):
             "AND phase IN ('running', 'result_ready', 'uncertain', 'succeeded', 'failed')))",
             name="ck_job_attempts_execution_authority",
         ),
+        CheckConstraint(
+            "last_heartbeat_at IS NULL OR "
+            "(invocation_id IS NOT NULL AND started_at IS NOT NULL "
+            "AND last_heartbeat_at >= started_at)",
+            name="ck_job_attempts_heartbeat_authority",
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
@@ -82,6 +88,7 @@ class JobAttempt(Base):
         UTCDateTime()
     )
     invocation_id: Mapped[UUID | None]
+    last_heartbeat_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
     created_at: Mapped[datetime] = mapped_column(
         UTCDateTime(), server_default=func.current_timestamp()
     )

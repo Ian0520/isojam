@@ -534,8 +534,8 @@ was migrated.
 ### Implemented slice: worker execution authorization (2026-10-05)
 
 This is stage one of the `feat/worker-execution-control` feature branch. Stage two
-will add guarded heartbeat records on the same branch, with a separate tested
-commit and learning review. Open the feature PR after both stages are complete.
+adds guarded heartbeat records on the same branch, with a separate tested commit
+and learning review. Both stages are now implemented; the feature is ready for PR.
 
 Attempts now store a nullable invocation UUID and a nullable UTC execution
 authorization deadline (`execution_authorization_expires_at`). An invocation ID
@@ -601,6 +601,58 @@ checks and actual process interruption/concurrency checks. Ruff lint/format pass
 across 66 maintained Python files, retaining the established exclusion of the two
 original generated migrations. The updated CPU image built and pip check passed;
 this library-only slice does not add or claim a real GPU/worker execution smoke.
+
+### Implemented slice: guarded worker heartbeats (2026-10-05)
+
+This completes stage two of `feat/worker-execution-control`. Execution permission
+and contact evidence share one feature branch with two tested commits; learning
+checkpoints do not require separate branches. Open the PR for both stages together.
+
+Attempts now store nullable UTC `last_heartbeat_at`. NULL means no report has been
+recorded, including immediately after execution authorization. A check constraint
+requires an invocation and start timestamp for contact, and forbids contact before
+start. Migration `f3b8d2106a74` preserves existing execution/dispatcher authority,
+records, timestamps, receipts and output paths, without inventing contact history.
+Downgrade removes only the new heartbeat column/constraint; it cannot stop a worker.
+Stop control and worker processes before migrating in either direction.
+
+`record_heartbeat(engine, reservation, invocation_id=...)` is a trusted internal
+repository operation. Its guarded UPDATE requires matching job/attempt IDs,
+attempt number, dispatcher owner/generation and the authorized invocation UUID.
+It also requires the latest attempt, running phase, a start without a finish, and
+a processing queued job. Stale, finished, superseded or ineligible reports return
+False. True acknowledges valid contact, including repeated reports at the same
+time; it never grants execution permission. A failed commit raises and rolls back.
+
+The operation owns a short SQLite write transaction, sampling control-side UTC
+after acquiring the lock. It accepts no worker timestamp. SQLite scalar max and
+coalesce preserve the greatest previous/contact/start time, so clock rollback or
+an older control-clock observation cannot regress contact history. updated_at also
+never regresses. Identity and generation, rather than timestamps, govern authority.
+
+An already authorized running invocation may report after its authorization
+deadline: that deadline limits new grants, not execution duration. Contact does
+not extend either deadline, transfer ownership, change job status or release the
+global occupied slot. A missing or old heartbeat is reason to investigate, not
+proof that a worker stopped or permission to run a replacement.
+
+Tests cover first/repeated reports, all identity guards, lifecycle/job rejection,
+a superseding attempt, post-deadline contact without renewed permission, clock
+rollback, time sampled after lock acquisition, failed commit, actual SQLite BEGIN
+and reader-blocked COMMIT contention, and independent spawned processes recording
+out-of-order control-clock observations with fresh-engine persistence checks.
+Populated migration upgrade/downgrade/re-upgrade preserves earlier authority and
+records, foreign keys, invocation uniqueness and exact existing WAV bytes. Contact
+history removed by downgrade remains absent on re-upgrade, rather than fabricated.
+
+Validation: all 668 backend tests passed on the host and in a disposable locked
+CPU image (Python 3.12.14 / SQLAlchemy 2.1.1 / Alembic 1.20.0), with tests running
+as UID 10001. Ruff lint/format passed across 69 maintained Python files, retaining
+the established exclusion of the two original generated migrations. The image
+built and pip check passed. All verification databases/audio were disposable;
+no development database or exercise volume was migrated. This adds no sending
+loop, dispatcher/worker command, authenticated remote endpoint, provider
+reconciliation, automatic replacement or real GPU execution smoke.
 
 ## 10. Review and learning checkpoints
 

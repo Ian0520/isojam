@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
-from sqlalchemy import Connection, Engine, insert, select, update
+from sqlalchemy import Connection, Engine, func, insert, select, update
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.sql.elements import ColumnElement
 
@@ -163,13 +163,13 @@ def _validate_reservation_lifetime(reservation_ttl_seconds: int) -> None:
         )
 
 
-def _current_pending_queued_attempt() -> ColumnElement[bool]:
+def _current_queued_attempt(job_status: str) -> ColumnElement[bool]:
     eligible_job = (
         select(Job.id)
         .where(
             Job.id == JobAttempt.job_id,
             Job.execution_backend == "queued",
-            Job.status == "pending",
+            Job.status == job_status,
         )
         .exists()
     )
@@ -214,7 +214,7 @@ def reclaim_reservation(
                 JobAttempt.dispatcher_id.is_not(None),
                 JobAttempt.dispatcher_generation > 0,
                 JobAttempt.reservation_expires_at <= now,
-                _current_pending_queued_attempt(),
+                _current_queued_attempt("pending"),
             )
             .values(
                 dispatcher_id=dispatcher_id,
@@ -265,7 +265,7 @@ def begin_submission(
                 JobAttempt.dispatcher_generation == reservation.dispatcher_generation,
                 JobAttempt.phase == "reserved",
                 JobAttempt.reservation_expires_at > now,
-                _current_pending_queued_attempt(),
+                _current_queued_attempt("pending"),
             )
             .values(
                 phase="submitting",
@@ -323,8 +323,7 @@ def authorize_execution(
     inside this short transaction.
     """
     _validate_reservation(reservation)
-    if not isinstance(invocation_id, UUID):
-        raise ValueError("invocation_id must be a UUID")
+    _validate_invocation_id(invocation_id)
     with _reservation_transaction(engine, busy_timeout_ms) as connection:
         now = _utc_now()
         # Refuse reusing an invocation on another attempt. The unique constraint
@@ -349,7 +348,7 @@ def authorize_execution(
                 JobAttempt.started_at.is_(None),
                 JobAttempt.finished_at.is_(None),
                 JobAttempt.execution_authorization_expires_at > now,
-                _current_pending_queued_attempt(),
+                _current_queued_attempt("pending"),
             )
             .values(
                 phase="running",
@@ -376,3 +375,63 @@ def authorize_execution(
                 "Execution authorization could not update its pending job"
             )
         return True
+
+
+def _validate_invocation_id(invocation_id: UUID) -> None:
+    if not isinstance(invocation_id, UUID):
+        raise ValueError("invocation_id must be a UUID")
+
+
+def record_heartbeat(
+    engine: Engine,
+    reservation: JobReservation,
+    *,
+    invocation_id: UUID,
+    busy_timeout_ms: int = 1000,
+) -> bool:
+    """Commit contact evidence from the current authorized running invocation.
+
+    True acknowledges a valid report, including repeated reports; it does not
+    grant execution permission. Identity/generation, latest attempt, phase and
+    public job state are checked atomically. Stale or ineligible reports return
+    False; a failed commit raises. No timestamp is accepted from the worker.
+
+    Control-side UTC time is sampled after acquiring the write lock. Stored
+    heartbeat/update times never regress if the clock moves backwards. The first
+    heartbeat is not invented at authorization or migration. Once authorized, an
+    invocation may report after its authorization deadline; heartbeats do not
+    renew deadlines, change ownership, or free the slot. Missing reports are
+    suspicion, not proof of termination. This is a trusted internal repository
+    operation; the sending loop and authenticated remote wrapper follow later.
+    """
+    _validate_reservation(reservation)
+    _validate_invocation_id(invocation_id)
+    with _reservation_transaction(engine, busy_timeout_ms) as connection:
+        now = _utc_now()
+        changed = connection.scalar(
+            update(JobAttempt)
+            .where(
+                JobAttempt.id == reservation.attempt_id,
+                JobAttempt.job_id == reservation.job_id,
+                JobAttempt.attempt_number == reservation.attempt_number,
+                JobAttempt.dispatcher_id == reservation.dispatcher_id,
+                JobAttempt.dispatcher_generation == reservation.dispatcher_generation,
+                JobAttempt.invocation_id == invocation_id,
+                JobAttempt.started_at.is_not(None),
+                JobAttempt.finished_at.is_(None),
+                JobAttempt.phase == "running",
+                _current_queued_attempt("processing"),
+            )
+            .values(
+                # SQLite's multi-argument max is scalar. Coalesce avoids NULL
+                # suppressing the first report; start time bounds clock rollback.
+                last_heartbeat_at=func.max(
+                    now,
+                    JobAttempt.started_at,
+                    func.coalesce(JobAttempt.last_heartbeat_at, now),
+                ),
+                updated_at=func.max(now, JobAttempt.updated_at),
+            )
+            .returning(JobAttempt.id)
+        )
+        return changed is not None
