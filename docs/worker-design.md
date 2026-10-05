@@ -427,6 +427,48 @@ receipt-write failure to prove transaction rollback, and exercise both model-
 created and Alembic-migrated databases. Receipt upgrade/downgrade preserves old
 job/attempt/output data; the complete migrated schema matches current models.
 
+### Implemented slice: atomic first-attempt reservation (2026-10-05)
+
+`reserve_next_job(engine, busy_timeout_ms=1000)` owns a fresh SQLite connection
+and commits one reserved attempt before returning immutable job/attempt IDs.
+`BEGIN IMMEDIATE` acquires the write transaction before checking capacity or
+choosing work. The oldest pending queued job with no attempt history is selected;
+creation-time ties are broken by job ID. Public job status remains pending.
+
+The attempt row itself persists the reservation. Any non-terminal queued attempt
+holds the one global queued-execution slot, including reserved, submitting,
+submitted, running, result-ready and uncertain phases. Public job status or an old
+heartbeat/creation time cannot free it. Terminal attempts do not block another
+job, but jobs with any attempt history are excluded from this first-attempt
+operation. Local jobs/attempts remain outside this queue. All future queued
+reservation/state writers must use the coordinated repository protocol; this
+slice does not add a global uniqueness constraint for arbitrary raw SQL writes.
+
+SQLite BUSY/LOCKED errors become a retryable `ReservationBusyError`; other SQL
+errors retain their original type. Lock waits are bounded per operation, default
+1000 ms and configurable from 0 to 30000 ms. This is not a total call deadline.
+The connection's original busy timeout is restored before returning it to the
+pool. A failed SQLite COMMIT can retain its physical transaction after SQLAlchemy
+marks its transaction inactive; cleanup rolls back the driver explicitly before
+clearing SQLAlchemy state. Tests exercise real reader-blocked commit, not only an
+injected exception. The current Python 3.12/pysqlite legacy transaction mode is
+required; different driver autocommit modes are rejected until explicitly tested.
+
+No schema migration is needed. API queued mode, dispatcher/worker commands,
+owner/generation authority, guarded transitions, cancellation, retries and result
+publication remain later slices. This repository operation alone does not start
+inference or make current local background work recoverable. Future terminal
+transitions must establish that execution is stopped before freeing the slot.
+
+Validation: 47 new cases cover fresh model-created and Alembic-migrated SQLite
+databases, independent spawned processes racing on one or multiple users' jobs,
+process termination after INSERT but before COMMIT, durable capacity after
+process exit, eligibility/order, all active phases, rollback and restored pooled
+connection settings. The full 399-test backend suite passed on the host and in a
+disposable locked-runtime container (Python 3.12.14 / SQLAlchemy 2.1.1 / Alembic
+1.20.0), running as UID 10001. Ruff lint/format checks passed across 60 maintained
+backend files. No development database or exercise volume was changed.
+
 ## 10. Review and learning checkpoints
 
 This stage is complete when the proposed flow and recovery tradeoffs have been
