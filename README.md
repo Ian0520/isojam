@@ -22,8 +22,8 @@ The current model produces vocals, drums, bass, guitar, piano, other, and instru
 - Audio files are stored on the local filesystem
 - Metadata is stored in SQLite
 - Local processing uses in-process FastAPI background tasks
-- Queued mode has a one-cycle local fake dispatcher/worker that saves and publishes verified dummy WAV bundles; real queued inference is not implemented yet
-- Interrupted jobs are not automatically resumed after a restart
+- Queued mode has a one-cycle local fake dispatcher/worker that saves, publishes and recovers verified dummy WAV bundles; real queued inference is not implemented yet
+- Local background inference is not resumed after restart; queued dispatch can recover publication from saved stop proof and valid results
 - Authentication uses access tokens only; refresh tokens are not implemented
 
 ## Architecture
@@ -244,9 +244,10 @@ After applying migrations, a dispatcher can run separately from the API. From
 python -m app.dispatcher --once --adapter local-fake
 ```
 
-This explicitly runs one cycle: commit reservation, commit submission intent,
-then start `python -m app.fake_worker` as a separate child. The fake worker reads
-its validated invocation from standard input, obtains permission and records one
+This explicitly runs one cycle. It first tries to recover one unfinished stopped
+attempt from saved results. If none qualifies, it commits reservation and submission
+intent for one new job, then starts `python -m app.fake_worker` as a separate child.
+The fake worker reads its validated invocation from standard input, obtains permission and records one
 heartbeat, then generates seven tiny deterministic WAVs in a private workspace.
 It saves a verified bundle under `ISOJAM_AUDIO_STORAGE_DIR/results`. These are
 explicitly fake artifacts, not separated audio. Neither command starts FastAPI
@@ -254,8 +255,9 @@ or loads the inference model. The local adapter uses the shared SQLite file on
 the same host; it is not remote GPU control.
 
 The dispatcher prints one JSON report. `completed` includes a `manifest_key` and
-means the local worker exited successfully, the fake bundle passed verification,
-and its output records and completion committed together.
+means the local worker exited successfully, the controller committed its stop
+evidence, the fake bundle passed verification, and its output records and
+completion committed together.
 The manifest records its job/attempt/invocation identity, fake processing profile,
 complete stem set, canonical storage keys, byte sizes, and SHA-256 hashes. Files
 are installed without replacement; the manifest is installed last. Missing,
@@ -266,9 +268,28 @@ inside a short SQLite transaction. All seven output rows, the selected manifest
 key/hash, the succeeded attempt and completed job commit together. The owner can
 then download the dummy WAVs through the existing output routes. Identical repeated
 publication acknowledges the saved result without rewriting rows or timestamps.
-The worker's `result_ready` report alone cannot complete a job.
+The worker's `result_ready` report alone cannot complete a job. First publication
+also requires durable controller-confirmed `execution_stopped_at` and the actual
+`execution_exit_code`. The local worker saves its launch UUID and PID when
+receiving permission; the controller must wait for that exact child and match
+both with the current job/attempt/invocation and dispatcher authority. A denied duplicate child cannot
+prove the original execution stopped. Exit status is diagnostic; only verification
+establishes that a complete usable bundle exists. Heartbeats stop being accepted
+after confirmed exit.
 
-`idle` means no eligible work or occupied capacity. Successful publication releases
+`recovered` means a previously unfinished stopped attempt passed bundle verification
+and its publication committed (or was identically acknowledged). Recovery preserves
+the original job, attempt, invocation, launch identity and execution ownership; it
+repairs publication without another execution grant. Each cycle finishes one
+recovery or one new delivery. To recover without dispatching pending work:
+
+```bash
+python -m app.dispatcher --once --adapter local-fake --reconcile-only
+```
+
+`idle` means no eligible work or occupied capacity. With --reconcile-only, it means
+no eligible unfinished stopped attempt, even if new jobs are pending or an unknown
+attempt remains occupied. Successful publication releases
 the global slot for another pending queued job. With no pending jobs, a second
 cycle is idle.
 Use disposable data for this intermediate exercise. For a fully isolated container
@@ -278,11 +299,18 @@ Launch/report errors print `submission_unresolved` and preserve existing attempt
 state. Failed publication leaves the files available and the attempt occupied;
 `publication_unresolved`, `publication_denied`, `publication_conflict` and
 `result_invalid` never authorize another execution. A database lock wait returns
-`database_busy` (exit 75). Publication can be retried separately after execution
-has ended; simply running another dispatch cycle does not reconcile an occupied
-attempt. There is no automatic resubmission, timeout-based release,
-expired-reservation scanner or polling loop yet. CLI defaults are 60 seconds for
-pre-submission ownership, 300 for receiving execution permission, 30 for the local
+`database_busy` (exit 75). Publication can be retried separately once durable
+stop proof and a verified bundle are available; a subsequent dispatch cycle can
+recover one such unfinished attempt. Invalid/unresolved candidate outcomes end the
+cycle and preserve occupied state. A timeout kills and waits for the direct fake
+child, records confirmed exit when it matches the authorized process, and retains the occupied attempt.
+A crash before committing that proof leaves termination unknown, even if files
+exist. Migrating older rows never invents exit proof. Existing identical completed
+publications remain acknowledgeable without adding historical stop evidence.
+There is no automatic inference retry, timeout-based release, expired-reservation
+scanner or polling loop. Recovery uses a stored authority snapshot and rechecks it
+after verification; it never transfers execution ownership. CLI defaults are
+60 seconds for pre-submission ownership, 300 for receiving execution permission, 30 for the local
 fake-child wait, and 1000 milliseconds for each SQLite lock wait. The child timeout
 is specific to this fake transport; it is not a GPU execution-time limit.
 

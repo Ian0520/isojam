@@ -993,3 +993,173 @@ the completed job. All migrations used disposable databases/volumes.
 The planned local queued-execution feature branch is ready for a user-opened PR
 before the next feature. Real GPU inference, automatic reconciliation, private
 remote storage/control and hosted deployment remain separate milestones.
+
+
+### Implemented slice: durable controller-confirmed exit (Stage 4A)
+
+The `feat/worker-recovery` branch first persists termination evidence; a subsequent
+slice will use it for restart reconciliation. This stage does not scan, take over,
+resubmit, retire or automatically publish occupied attempts.
+
+Migration `b5d8f3027a91` adds nullable local_worker_id/local_worker_pid,
+execution_stopped_at and execution_exit_code. Existing rows remain NULL, including completed publications;
+a schema upgrade cannot establish that an old process stopped. Downgrade removes
+these four columns and their constraints, preserving outputs, selected manifests
+and other history. Stop controllers/workers before upgrading or downgrading.
+
+The controller creates a fresh UUID for each local launch, including repeated
+delivery. The fake child saves that UUID and os.getpid() in the same authorization
+transaction as the invocation and processing state. LocalFakeWorkerAdapter now uses Popen so it can
+retain the child handle and actual return code after normal exit or timeout cleanup.
+It sends the bounded invocation through stdin, waits with communicate(), and on
+timeout kills then waits for the direct child. It persists stop evidence before
+parsing the report, so a malformed/lost report cannot erase independently confirmed
+exit. It does not inspect an arbitrary saved PID after restart: PID reuse and host
+namespaces make that insufficient. The fake child has no descendants; this is not
+a general GPU process-tree cancellation or asynchronous provider contract.
+
+record_execution_stopped is a trusted controller operation, never a worker
+self-report. Under BEGIN IMMEDIATE it checks the current queued job, latest attempt,
+attempt number, owner/generation and authorized invocation. A local controller
+also supplies the fresh launch UUID and PID from its waited-for child handle;
+both must match the identity saved by the child that received permission.
+The UUID prevents PID reuse or container PID namespaces from matching a different
+delivery, even when its PID is identical. This matters on duplicate
+delivery: a second denied child's exit cannot stand in for the original execution.
+A generic future controller must independently establish termination of its exact
+provider execution before using the repository operation. No remote wrapper exists.
+
+UTC stop time is sampled after acquiring the lock and cannot precede start or last
+heartbeat. The schema requires a complete stop/exit-code pair, an authorized start,
+an integer POSIX exit code or negative signal in [-255, 255], and finish time no
+earlier than confirmed stop. Identical reports acknowledge without rewriting;
+different exit codes and stale identities are refused. A failed commit is not a
+durable acknowledgement. Recording exit keeps running/processing and the slot;
+heartbeats after confirmed stop are refused. It never grants execution permission.
+
+First publication now requires persisted stop evidence in addition to independent
+bundle verification. Final timestamps include the stop time even on clock rollback.
+An already completed identical publication remains acknowledgeable after migration,
+including downgrade followed by re-upgrade; it creates no new result and invents no historical
+proof. A completed legacy row cannot retroactively acquire new stop evidence.
+
+| Evidence | What it establishes |
+| --- | --- |
+| Authorization | This invocation may start once |
+| Heartbeat | The authorized invocation made contact |
+| Verified bundle | All required files exist and pass validation |
+| Controller-confirmed exit | The exact authorized execution ended |
+| Publication commit | All outputs and public completion became visible atomically |
+
+Exit zero alone does not establish a valid bundle. A nonzero or killed execution
+can leave a valid completed bundle before losing its report; exit status is
+stored for diagnosis, while bundle verification determines usability. Normal
+adapter success still requires a matching result_ready report and exit zero.
+Timeouts and report/publication failures preserve the occupied attempt; there is
+no automatic recovery yet. A crash after exit but before proof commit remains
+unknown and must not authorize a replacement from heartbeat age, expired start
+permission or manifest presence. Reconciliation of saved proof follows in 4B.
+
+Tests cover model-created/migrated schemas, exact controller/child identity,
+denied duplicate delivery, actual timeout kill/wait, invalid reports after exit,
+failed stop/publication commits, unchanged duplicate evidence, schema chronology,
+clock rollback, expired permission, independent bundle/exit requirements, and
+upgrade/downgrade/re-upgrade preserving completed publications and file bytes.
+
+General lesson: evidence must identify the event it proves. Waiting for a process
+proves that process ended, not that a different execution with the same delivered
+request ended. Persist confirmed facts separately from decisions so a restart
+can recover a decision without repeating expensive computation.
+
+
+Stage verification: 1,013 tests passed on the host and 1,013 with locked CPU
+runtime dependencies as UID 10001 (Python 3.12.14, SQLAlchemy 2.1.1, Alembic 1.20.0).
+All 84 maintained Python files passed Ruff lint/format checks. The rebuilt
+isojam-api:stop-evidence-check image passed the isolated queued container smoke:
+a fresh container observed saved launch UUID/PID, stop/exit evidence, selected
+manifest and seven output rows, and the restarted API served exact published WAV
+hashes. Smoke/test containers and the smoke volume were removed; the Docker
+exercise volume remained present. Every migration check used disposable storage.
+
+Stage 4A is committed separately on feat/worker-recovery. Restart reconciliation
+will follow on this same feature branch before the user-opened pull request.
+
+
+### Implemented slice: bounded restart publication recovery (Stage 4B)
+
+Stage 4B completes feat/worker-recovery. The dispatcher can repair publication
+from saved stop proof and a verified fake bundle after controller restart. It
+preserves the original job/attempt/invocation, execution ownership/generation,
+launch identity and stop timestamps. No migration or new runtime dependency is
+needed beyond Stage 4A's b5d8f3027a91 migration.
+
+find_recoverable_attempt inspects at most one owned, latest, running/unfinished
+attempt for a processing queued job. An authorized start/invocation and a complete
+stop/exit pair are required. A short read transaction bounds SQLite contention
+and releases its connection before filesystem verification. Inspection obtains no writer reservation; the
+publication transition still uses BEGIN IMMEDIATE.
+The returned frozen RecoverableAttempt is a snapshot, not a new execution grant,
+publication reservation or transfer of ownership. Inspectors may see the same row.
+
+reconcile_once verifies the expected identity/profile through the existing
+publish_result path, then uses guarded atomic publication. Normal delivery and
+recovery share the same publication-status handling. Current identity, owner,
+generation, latest attempt, stop proof and public state are checked again under
+BEGIN IMMEDIATE. If another controller already committed the same result, the
+existing identical-publication acknowledgement succeeds without rewriting rows
+or timestamps. Changed authority is denied; conflicting publication is reported,
+not overwritten. No hashing, decoding or worker work occurs under the write lock.
+
+A successful pass returns recovered, with the original identifiers, saved worker
+PID and canonical manifest key. result_invalid, publication_denied,
+publication_conflict and publication_unresolved preserve the current state and
+end the pass. SQLite contention propagates database_busy (CLI exit 75); the caller
+may try the publication pass later. No eligible candidate returns None internally.
+
+The normal --once dispatcher tries one recovery before reserving new work. Any
+candidate outcome ends the cycle: it never both recovers an old job and launches a
+new one. If no candidate qualifies, ordinary reservation still respects all
+occupied queued attempts. A proof committed after lookup may wait until the next
+cycle; it cannot cause a second inference. Successful recovery frees capacity for
+the next normal cycle.
+
+--reconcile-only requests just this bounded recovery pass; it never submits new
+work. CLI completed/recovered/idle exit zero. Here idle includes pending new jobs
+and occupied attempts without stop proof; it is not a claim that no execution is
+running. Missing proof cannot be inferred from deadline expiry, heartbeat age or
+manifest presence. Missing/invalid bundles retain the occupied attempt. Retiring
+failed work, authorizing inference retries, scanning expired pre-submission
+reservations, periodic loops, remote provider inspection and GPU execution remain
+separate work. Recovery currently supports the explicit local fake profile/store.
+
+Tests include actual child exit plus interrupted publication, disposal of the
+original engine, recovery with a fresh controller, unchanged saved file bytes and
+inodes, one original attempt/invocation/owner, recovery before another pending job,
+CLI-only recovery without submission, missing proof, terminal/local/stale/unowned
+states, damaged files, authority changes during verification, write-lock release,
+failed publication commits and real SQLite reader-blocked COMMIT rollback. Two
+independent recovery processes rendezvous after verification and acknowledge one
+atomic publication. Lookup contention and the CLI retain bounded waits/exit 75.
+
+General lesson: reconciliation completes an unfinished transition using durable
+facts. Make that transition idempotent and recheck mutable authority at commit;
+a stale snapshot is not permission to publish. Short read-only inspection, file
+verification and atomic publication are separate steps, so competing controllers can safely
+converge on the same result without repeating computation.
+
+
+Stage verification: 1,061 tests passed on the host and 1,061 under locked CPU
+runtime dependencies as UID 10001 (Python 3.12.14, SQLAlchemy 2.1.1, Alembic 1.20.0).
+All 85 maintained Python files passed Ruff lint/format checks. The rebuilt
+isojam-api:recovery-check image passed the isolated queued smoke with
+--dispatch-fake-worker --recover-publication: intentionally interrupted publication
+left zero output rows and saved stop proof; a fresh dispatcher container recovered
+the same job/attempt/invocation/PID and preserved launch UUID and stop timestamp.
+The restarted API served all seven WAVs with exact published hashes and keyed
+submission replay returned the completed job. A second cycle stayed idle.
+Verification used disposable storage and cleaned up its labeled containers/volume;
+the existing isojam-exercise-data volume was preserved.
+
+The two learning-stage commits complete feat/worker-recovery for a user-opened PR.
+Unknown termination, invalid-bundle retirement, remote provider control/storage,
+real GPU execution and hosted deployment remain separate milestones.

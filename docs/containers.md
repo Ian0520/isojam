@@ -288,3 +288,57 @@ and replayed the original submission key to retrieve the completed job.
 The full locked suite passed 918 tests as UID 10001. Verification resources were
 removed using their run-specific labels. For an existing database, stop control
 processes and apply `python -m alembic upgrade head` before using this dispatcher.
+
+
+### Durable controller exit evidence verification (2026-10-05)
+
+The isojam-api:stop-evidence-check image passed the isolated queued smoke with
+--dispatch-fake-worker. A fresh container verified the authorized local launch
+UUID/PID, actual exit code zero, and start/heartbeat/stop/finish chronology alongside
+the selected manifest and all seven outputs. The restarted API served every owned
+WAV with its exact published SHA-256; a second dispatch cycle remained idle.
+
+All 1,013 tests passed on the host and in a separate disposable test container
+with locked CPU dependencies as UID 10001. Lint/format passed across 84 maintained
+Python files. Verification containers/volumes were removed, while the existing
+isojam-exercise-data volume remained present. This verifies local fake execution,
+not remote GPU termination or automatic restart reconciliation. For existing data,
+stop API/control/worker processes and apply python -m alembic upgrade head before
+using the new code; migration does not invent exit evidence for historical rows.
+
+
+### Exercise interrupted publication recovery
+
+Build the updated image and run the isolated restart smoke from the repository root:
+
+```bash
+docker build --platform linux/amd64 -t isojam-api:recovery-check ./backend
+python backend/scripts/smoke_container.py --image isojam-api:recovery-check --processing-mode queued --dispatch-fake-worker --recover-publication
+```
+
+The smoke deliberately interrupts the publication commit after a real child exits.
+The first disposable dispatcher container leaves a processing job, running attempt,
+complete saved bundle and controller-confirmed stop proof, with zero output rows.
+A fresh container runs --reconcile-only and publishes that same invocation. It
+checks unchanged launch UUID/PID and stop timestamp, one attempt, all seven outputs,
+and exact downloaded WAV hashes after API restart. A repeated cycle stays idle.
+The run-specific labeled containers and volume are removed afterwards.
+
+For existing queued data, the ordinary --once dispatcher first attempts one such
+recovery. To restrict an operator action to recovery without dispatching new work:
+
+```bash
+python -m app.dispatcher --once --adapter local-fake --reconcile-only
+```
+
+Use the same database/audio volume and apply the Stage 4A migration before running
+this code. Unknown termination or invalid files retain the occupied attempt.
+This same-host fake exercise does not establish remote GPU cancellation/recovery.
+
+
+Stage 4B verification passed on isojam-api:recovery-check: 1,061 host tests,
+1,061 locked-container tests as UID 10001, lint/format across 85 maintained Python
+files, and the isolated interrupted-publication smoke above. The fresh recovery
+container preserved the launch UUID/PID and stop timestamp, published one original
+attempt, and the restarted API served seven exact-hash outputs. Verification
+containers/volumes were removed; isojam-exercise-data remained present.

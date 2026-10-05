@@ -3,7 +3,7 @@ import os
 import subprocess
 import sys
 from datetime import timedelta
-from unittest.mock import Mock
+from unittest.mock import MagicMock, Mock
 from uuid import uuid4
 
 import pytest
@@ -82,6 +82,7 @@ def test_heartbeat_denial_does_not_claim_success(
         "oversized",
         "wrong_identity",
         "wrong_exit_code",
+        "wrong_worker_pid",
         "wrong_manifest_key",
         "missing_bundle",
         "missing_manifest_key",
@@ -112,6 +113,10 @@ def test_adapter_rejects_untrustworthy_reports(
         body = json.loads(raw)
         body["attempt_id"] = str(uuid4())
         raw = json.dumps(body).encode()
+    elif corruption == "wrong_worker_pid":
+        body = json.loads(raw)
+        body["worker_pid"] += 1
+        raw = json.dumps(body).encode()
     elif corruption == "wrong_exit_code":
         exit_code = 3
     elif corruption == "wrong_manifest_key":
@@ -135,15 +140,18 @@ def test_adapter_rejects_untrustworthy_reports(
         )
         assert "ISOJAM_JWT_SECRET_KEY" not in kwargs["env"]
         kwargs["stdout"].write(raw)
-        return subprocess.CompletedProcess(command, exit_code)
+        process = MagicMock(returncode=exit_code, pid=os.getpid())
+        process.__enter__.return_value = process
+        return process
 
     monkeypatch.setenv("ISOJAM_JWT_SECRET_KEY", "do-not-pass-to-worker")
-    monkeypatch.setattr(execution.subprocess, "run", bad_report)
+    monkeypatch.setattr(execution.subprocess, "Popen", bad_report)
     expected = {
         "invalid_json": "invalid report",
         "oversized": "exceeds the message limit",
         "wrong_identity": "does not match its invocation",
         "wrong_exit_code": "does not match its invocation",
+        "wrong_worker_pid": "does not match its invocation",
         "wrong_manifest_key": "manifest key does not match",
         "missing_bundle": "bundle could not be verified",
         "missing_manifest_key": "invalid report",
@@ -246,7 +254,29 @@ def test_adapter_passes_configured_audio_root_even_when_trusted_store_root_is_sy
     def return_denial(command, **kwargs):
         assert kwargs["env"]["ISOJAM_AUDIO_STORAGE_DIR"] == str(audio)
         kwargs["stdout"].write(report.model_dump_json().encode())
-        return subprocess.CompletedProcess(command, 3)
+        process = MagicMock(returncode=3, pid=os.getpid())
+        process.__enter__.return_value = process
+        return process
 
-    monkeypatch.setattr(execution.subprocess, "run", return_denial)
+    monkeypatch.setattr(execution.subprocess, "Popen", return_denial)
     assert adapter.submit(invocation) == report
+
+
+def test_denied_duplicate_child_exit_cannot_prove_original_execution_stopped(
+    reservation_engine, invocation
+):
+    assert run_fake_worker(reservation_engine, invocation).status == "result_ready"
+    with Session(reservation_engine) as session:
+        assert (
+            session.get(JobAttempt, invocation.attempt_id).local_worker_pid
+            == os.getpid()
+        )
+    report = LocalFakeWorkerAdapter(reservation_engine).submit(invocation)
+    assert report.status == "permission_denied" and report.worker_pid != os.getpid()
+    with Session(reservation_engine) as session:
+        attempt = session.get(JobAttempt, invocation.attempt_id)
+        assert attempt.local_worker_pid == os.getpid()
+        assert (
+            attempt.execution_stopped_at is None and attempt.execution_exit_code is None
+        )
+        assert attempt.phase == "running" and attempt.finished_at is None

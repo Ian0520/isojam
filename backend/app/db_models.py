@@ -60,6 +60,25 @@ class JobAttempt(Base):
             "AND reservation_expires_at IS NOT NULL)",
             name="ck_job_attempts_dispatcher_authority",
         ),
+        CheckConstraint(
+            "(execution_stopped_at IS NULL AND execution_exit_code IS NULL) OR "
+            "(execution_stopped_at IS NOT NULL AND execution_exit_code IS NOT NULL "
+            "AND typeof(execution_exit_code) = 'integer' "
+            "AND execution_exit_code BETWEEN -255 AND 255 "
+            "AND invocation_id IS NOT NULL AND started_at IS NOT NULL "
+            "AND execution_stopped_at >= started_at "
+            "AND (last_heartbeat_at IS NULL OR execution_stopped_at >= last_heartbeat_at) "
+            "AND (finished_at IS NULL OR finished_at >= execution_stopped_at) "
+            "AND phase IN ('running', 'result_ready', 'uncertain', 'succeeded', 'failed'))",
+            name="ck_job_attempts_execution_stopped",
+        ),
+        CheckConstraint(
+            "(local_worker_pid IS NULL AND local_worker_id IS NULL) OR "
+            "(local_worker_pid IS NOT NULL AND local_worker_id IS NOT NULL "
+            "AND typeof(local_worker_pid) = 'integer' AND local_worker_pid > 0 "
+            "AND invocation_id IS NOT NULL AND started_at IS NOT NULL)",
+            name="ck_job_attempts_local_worker",
+        ),
         UniqueConstraint("invocation_id", name="uq_job_attempts_invocation"),
         CheckConstraint(
             "(execution_authorization_expires_at IS NULL OR "
@@ -99,6 +118,10 @@ class JobAttempt(Base):
     )
     invocation_id: Mapped[UUID | None]
     last_heartbeat_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
+    local_worker_id: Mapped[UUID | None]
+    local_worker_pid: Mapped[int | None]
+    execution_stopped_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
+    execution_exit_code: Mapped[int | None]
     result_manifest_key: Mapped[str | None]
     result_manifest_sha256: Mapped[str | None]
     created_at: Mapped[datetime] = mapped_column(

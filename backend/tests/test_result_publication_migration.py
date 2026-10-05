@@ -93,7 +93,14 @@ def test_publication_migration_preserves_data_and_does_not_invent_selected_manif
         assert reservations.authorize_execution(
             engine, token, invocation_id=invocation_id
         )
-        assert reservations.record_heartbeat(engine, token, invocation_id=invocation_id)
+        # Seed the old schema without invoking current code that uses new columns.
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "UPDATE job_attempts SET last_heartbeat_at = started_at WHERE id = :id"
+                ),
+                {"id": token.attempt_id.hex},
+            )
         before = snapshot(engine)
         command.upgrade(config, "head")
         assert snapshot(engine) == before
@@ -115,6 +122,12 @@ def test_publication_migration_preserves_data_and_does_not_invent_selected_manif
             invocation_id=invocation_id,
         )
         bundle = store.write_bundle(identity, workspace)
+        assert reservations.record_execution_stopped(
+            engine,
+            token,
+            invocation_id=invocation_id,
+            exit_code=0,
+        )
         assert publish_result(engine, token, invocation_id=invocation_id, store=store)
         after_publication = snapshot(engine)
         command.downgrade(config, PREVIOUS_REVISION)
