@@ -21,6 +21,8 @@ demo and a separate containerized worker exercise for learning reliable delivery
 - Account registration and login with Argon2 password hashing and JWT access tokens.
 - Authenticated WAV uploads with request, file-size, duration and decoded-audio validation.
 - Ownership checks on uploads, jobs and stem downloads.
+- Owner-scoped job-history API with cursor pagination and original filenames.
+- Browser history with recent sessions, refresh, pagination and one-click reopening.
 - Browser submission, status polling, session restoration by job ID, playback and downloads.
 - Seven outputs: vocals, drums, bass, guitar, piano, other and instrumental.
 - Persistent metadata with Alembic migrations, per-user unfinished-job limits and idempotent job submission.
@@ -69,8 +71,9 @@ uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
 Open [http://127.0.0.1:8000/](http://127.0.0.1:8000/), create an account, choose a
-short WAV and select **Separate audio**. Save the job ID to reopen the session
-later. API documentation is at `/docs`. See the [demo guide](docs/demo.md) for
+short WAV and select **Separate audio**. Return to previous work through **Your
+sessions**; saved job IDs also work through the expandable lookup. API documentation
+is at `/docs`. See the [demo guide](docs/demo.md) for
 prerequisites and the tested workflow.
 
 ## Verify without a GPU
@@ -85,9 +88,8 @@ python3 backend/scripts/smoke_container.py --image isojam-api:ci --processing-mo
 ```
 
 The checks use disposable databases, audio directories and Docker resources.
-They test the installed CPU image and preserve existing project data. The full
-locked suite currently has **1,064 passing tests**. These checks use fake model
-sessions; the real GPU browser flow is validated separately.
+They test the installed CPU image and preserve existing project data. These
+checks use fake model sessions; the real GPU browser flow is validated separately.
 
 See [CI](docs/ci.md) for workflow details and [containers](docs/containers.md) for
 manual operation with your own persistent volume.
@@ -102,8 +104,8 @@ Preview fetches a whole authenticated WAV before playing it.
 Local inference has no global GPU scheduling limit or restart recovery. The
 queued path currently processes fake audio, uses one global slot, and requires
 explicit dispatcher cycles. AWS hosting, remote GPU execution, MySQL and Redis
-integration remain future work. Custom backing-track mixing, speed adjustment
-and a job-history list are not yet implemented.
+integration remain future work. Custom backing-track mixing and speed adjustment
+are not yet implemented.
 
 ## Explore the project
 

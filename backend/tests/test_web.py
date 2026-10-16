@@ -22,6 +22,9 @@ def test_browser_assets_and_runtime_info_in_each_mode(
         assert page.headers["content-type"].startswith("text/html")
         assert "script-src 'self'" in page.headers["content-security-policy"]
         assert client.get("/static/app.js").status_code == 200
+        history_script = client.get("/static/history.js")
+        assert history_script.status_code == 200
+        assert "javascript" in history_script.headers["content-type"]
         assert client.get("/static/styles.css").status_code == 200
         assert client.get("/ui-info").json() == {
             "processing_mode": mode,

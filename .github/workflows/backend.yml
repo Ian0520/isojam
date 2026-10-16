@@ -26,7 +26,12 @@ jobs:
           node-version: '24'
 
       - name: Check browser JavaScript syntax
-        run: node --check backend/app/static/app.js
+        run: |
+          node --check backend/app/static/app.js
+          node --check backend/app/static/history.js
+
+      - name: Test browser history coordination
+        run: node --test backend/tests/test_job_history_browser.mjs
 
       - name: Build CPU runtime image
         run: docker build --platform linux/amd64 --tag isojam-api:ci backend

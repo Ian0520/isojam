@@ -3,16 +3,30 @@ from pathlib import Path
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Request
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    Header,
+    HTTPException,
+    Query,
+    Request,
+)
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from app.auth import get_current_user
 from app.database import commit_session, get_db
 from app.db_models import Job, JobOutput, User
+from app.job_history import JobHistoryCursor
 from app.processing import process_job
 from app.repositories import job_outputs, job_submissions, jobs, uploads
-from app.schemas import CreateJobRequest, JobResponse
+from app.schemas import (
+    CreateJobRequest,
+    JobHistoryItem,
+    JobHistoryResponse,
+    JobResponse,
+)
 
 router = APIRouter()
 
@@ -41,6 +55,46 @@ def serialize_job(job: Job, outputs: Sequence[JobOutput]) -> JobResponse:
         status=job.status,
         upload_id=job.upload_id,
         outputs=output_urls,
+    )
+
+
+@router.get("/jobs", response_model=JobHistoryResponse)
+def list_jobs_endpoint(
+    session: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+    cursor: Annotated[str | None, Query(min_length=1, max_length=512)] = None,
+) -> JobHistoryResponse:
+    before = None
+    if cursor is not None:
+        try:
+            before = JobHistoryCursor.decode(cursor)
+        except ValueError as error:
+            raise HTTPException(
+                status_code=422, detail="Invalid job history cursor"
+            ) from error
+
+    rows = jobs.list_user_jobs(session, current_user.id, limit=limit + 1, before=before)
+    page = rows[:limit]
+    next_cursor = None
+    if len(rows) > limit:
+        last_job = page[-1][0]
+        next_cursor = JobHistoryCursor(
+            created_at=last_job.created_at, id=last_job.id
+        ).encode()
+
+    return JobHistoryResponse(
+        items=[
+            JobHistoryItem(
+                id=job.id,
+                upload_id=job.upload_id,
+                filename=filename,
+                status=job.status,
+                created_at=job.created_at,
+            )
+            for job, filename in page
+        ],
+        next_cursor=next_cursor,
     )
 
 

@@ -57,7 +57,7 @@ changing an image alone does not undo data migrations.
 | New jobs return 503 | Check `ISOJAM_PROCESSING_MODE`. The CPU image defaults to `disabled`; use local GPU mode for real separation or queued mode for the fake exercise. |
 | Browser says Demo queue | It is queued mode. Run an explicit fake dispatcher cycle against the same database and audio directory. Its WAVs are test artifacts. |
 | Upload returns 413 / 422 | Check byte/duration limits or readable mono/stereo WAV content. Renaming a file is insufficient; the server decodes and validates it. |
-| Browser sign-in expires | Log in again and reopen the saved job ID. Access tokens expire after 30 minutes; there is no refresh-token flow. |
+| Browser sign-in expires | Log in again and select the job from Your sessions, or use the saved-ID lookup. Access tokens expire after 30 minutes; there is no refresh-token flow. |
 | Job submission returns 429 | The user has reached the configured unfinished-job allowance. Inspect existing jobs before creating more work. |
 | Another account receives 404 | Ownership checks intentionally hide the resource. Use the owning account; do not weaken the check. |
 | Pending queued job never starts | A cycle may not have run, or the single global attempt slot is occupied. Inspect the dispatcher JSON result. |
