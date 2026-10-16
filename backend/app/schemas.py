@@ -1,3 +1,4 @@
+from datetime import datetime
 from uuid import UUID
 
 from pydantic import BaseModel, EmailStr, Field
@@ -38,3 +39,16 @@ class JobResponse(BaseModel):
     status: str
     upload_id: UUID
     outputs: dict[str, str]
+
+
+class JobHistoryItem(BaseModel):
+    id: UUID
+    upload_id: UUID
+    filename: str
+    status: str
+    created_at: datetime
+
+
+class JobHistoryResponse(BaseModel):
+    items: list[JobHistoryItem]
+    next_cursor: str | None

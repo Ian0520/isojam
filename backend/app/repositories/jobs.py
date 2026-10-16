@@ -1,9 +1,11 @@
+from collections.abc import Sequence
 from uuid import UUID, uuid4
 
-from sqlalchemy import func, insert, literal, select
+from sqlalchemy import and_, func, insert, literal, or_, select
 from sqlalchemy.orm import Session
 
 from app.db_models import Job, JobSubmissionReceipt, Upload
+from app.job_history import JobHistoryCursor
 
 ALLOWED_STATUSES = {"pending", "processing", "completed", "failed"}
 
@@ -18,6 +20,30 @@ def create_job(session: Session, upload_id: UUID) -> Job:
 
 def get_job(session: Session, job_id: UUID) -> Job | None:
     return session.get(Job, job_id)
+
+
+def list_user_jobs(
+    session: Session,
+    user_id: UUID,
+    *,
+    limit: int,
+    before: JobHistoryCursor | None = None,
+) -> Sequence[tuple[Job, str]]:
+    """Filter ownership before limiting rows in a deterministic history order."""
+    statement = (
+        select(Job, Upload.original_filename)
+        .join(Upload, Upload.id == Job.upload_id)
+        .where(Upload.user_id == user_id)
+    )
+    if before is not None:
+        statement = statement.where(
+            or_(
+                Job.created_at < before.created_at,
+                and_(Job.created_at == before.created_at, Job.id < before.id),
+            )
+        )
+    statement = statement.order_by(Job.created_at.desc(), Job.id.desc()).limit(limit)
+    return session.execute(statement).tuples().all()
 
 
 def update_job_status(

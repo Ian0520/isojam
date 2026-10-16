@@ -392,7 +392,35 @@ writes to protect simultaneous submissions. A different database backend require
 reviewing its locking/isolation behavior. This allowance bounds unfinished work;
 it is not a daily usage limit or a global GPU concurrency limit.
 
-### 4. Check Processing Status
+### 4. View Job History
+
+Request `GET /jobs` with bearer authentication to list the current account's jobs.
+Each item contains `id`, `upload_id`, `filename` (the original upload filename),
+`status`, and a UTC `created_at` timestamp. Local and queued jobs in every public
+status are included. Select an item and use `GET /jobs/{job_id}` for its output
+URLs.
+
+Pages default to 20 items. Set `limit` from 1 to 100; invalid sizes return `422`.
+Jobs are ordered by creation time descending, then job ID descending to resolve
+equal timestamps. The response contains `items` and `next_cursor`; an account with
+no jobs receives `{"items": [], "next_cursor": null}`.
+
+When `next_cursor` is non-null, pass it unchanged in the next request:
+
+```http
+GET /jobs?limit=20&cursor=<next_cursor>
+Authorization: Bearer <access_token>
+```
+
+The cursor marks the last returned creation-time/ID pair. Newly inserted jobs do
+not shift subsequent pages; refresh the first page to see new jobs. Each request
+reads current job statuses rather than a frozen snapshot of the entire history.
+Malformed cursors return `422`. A cursor is a position, not a credential: every
+page filters ownership using the authenticated account. History remains available
+when new processing is disabled. Browser history-list integration is a separate
+step; the current browser can reopen a known job ID.
+
+### 5. Check Processing Status
 
 Poll `GET /jobs/{job_id}`.
 
@@ -410,7 +438,7 @@ Jobs have one of four statuses: `pending`, `processing`, `completed`, or `failed
 }
 ```
 
-### 5. Download a Stem
+### 6. Download a Stem
 
 Request `GET /jobs/{job_id}/outputs/{stem}` with the same bearer authentication.
 
