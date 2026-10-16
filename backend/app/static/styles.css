@@ -309,11 +309,67 @@ input::placeholder {
   color: var(--accent);
   font-size: 13px;
 }
-.resume-panel {
+.history-panel {
   padding: 23px 28px;
 }
-.resume-panel .full-width {
+.history-panel .full-width {
   margin-top: 12px;
+}
+.history-panel .section-heading {
+  flex-wrap: wrap;
+  gap: 4px 12px;
+}
+.history-list {
+  list-style: none;
+  padding: 0;
+  margin: 14px 0 0;
+  display: grid;
+  gap: 8px;
+  max-height: 360px;
+  overflow-y: auto;
+}
+.history-list:empty {
+  margin: 0;
+}
+.history-job {
+  display: grid;
+  justify-items: start;
+  gap: 6px;
+  width: 100%;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #151c1c;
+  color: var(--text);
+  text-align: left;
+}
+.history-job:hover:not(:disabled),
+.history-job[aria-current="true"] {
+  border-color: var(--accent);
+  background: #263126;
+}
+.history-filename {
+  overflow-wrap: anywhere;
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 550;
+}
+.history-job time {
+  color: var(--muted);
+  font-size: 10px;
+}
+.history-message.error {
+  color: var(--danger);
+}
+.job-id-lookup {
+  border-top: 1px solid var(--border);
+  padding-top: 14px;
+  margin-top: 18px;
+}
+.job-id-lookup summary {
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 11px;
 }
 .privacy-note {
   margin: 0;

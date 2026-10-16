@@ -29,8 +29,11 @@ queued worker.
 4. Choose a short WAV you have permission to use, then select **Separate audio**.
    Watch pending/processing become completed. The page displays no invented
    percentage because the API reports state rather than numeric progress.
-5. Preview an instrument and download its WAV. Copy the job ID, reload the page,
-   and reopen the session. The same account must own the job.
+5. Preview an instrument and download its WAV. Reload the page to restore the
+   selected session, or select previous work from **Your sessions**. **Load more**
+   appends another history page; **Refresh** returns to the newest page. Saved
+   job IDs can also be entered in the expandable lookup. The same account must
+   own the job.
 6. Sign out. The browser removes its tab-scoped token and audio URLs; accepted
    server jobs continue independently of the browser.
 
@@ -55,7 +58,8 @@ submission response followed by same-key retry, a truncated accepted JSON respon
 followed by same-key retry, seven output rows, protected playback/download, reload restoration, mobile layout, signout during a delayed
 audio response, cross-account denial, malformed WAV rejection and expired-token
 cleanup. These were separate local automation checks; CI currently runs Python
-checks, JavaScript syntax and container HTTP smokes, not the full browser suite.
+checks, JavaScript syntax, history-controller tests and container HTTP smokes,
+not the full browser suite.
 
 The lost-response check dropped the reply **after** the API accepted the job.
 A separate truncated-response check returned an incomplete successful JSON reply.
@@ -63,6 +67,30 @@ Retrying with the original upload ID and idempotency key returned that same job.
 The page retains this retry state while it stays open; it does not persist an
 unacknowledged submission across a reload. Save an acknowledged job ID to return
 later. Server-side idempotency receipts persist independently of the browser.
+
+### Job-history checks (2026-10-16)
+
+The history list was checked against a disposable queued API with 25 seeded jobs,
+a separate initially empty account, and synthetic WAVs. This exercised:
+
+- A 20-item first page, appending the final five items, hiding Load more at the
+  end, and refreshing back to the newest page.
+- Opening seven output rows from history, authenticated preview/download,
+  keyboard activation, the expandable saved-ID lookup, and reload restoration.
+- Displaying filenames containing markup characters as literal text.
+- Keeping displayed items after an injected 503 and recovering on retry.
+- Signing out and entering another account while the old response was delayed;
+  the first account's rows stayed cleared after its response arrived.
+- Automatically adding a newly submitted synthetic recording to history.
+- Clearing history and the selected session on an injected 401, then reopening
+  previous work after sign-in.
+- No horizontal document overflow with a 390-pixel viewport override.
+
+Nine Node controller tests also cover pagination, retry, competing refreshes,
+account-reset races, and status updates. They now run in CI. These checks validate
+the browser/history flow; the fixture does not perform real model inference.
+The container build could not be rerun locally because Docker was unavailable in
+WSL; the updated asset smoke and existing container checks remain part of CI.
 
 ## One measured local run
 

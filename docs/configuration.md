@@ -417,8 +417,16 @@ not shift subsequent pages; refresh the first page to see new jobs. Each request
 reads current job statuses rather than a frozen snapshot of the entire history.
 Malformed cursors return `422`. A cursor is a position, not a credential: every
 page filters ownership using the authenticated account. History remains available
-when new processing is disabled. Browser history-list integration is a separate
-step; the current browser can reopen a known job ID.
+when new processing is disabled.
+
+The browser's **Your sessions** panel loads the first page after sign-in or a
+signed-in reload. Select a recording to open its existing job status and outputs.
+**Load more** appends the next page; **Refresh** replaces the list with the newest
+page. A failed request preserves the displayed list and cursor so it can be
+retried. A successful new submission refreshes history, and status polling updates
+the selected job's badge. Other rows update on refresh. Sign-out clears the list
+and invalidates pending requests. The **Open a saved job ID** section remains
+available as an expandable fallback.
 
 ### 5. Check Processing Status
 

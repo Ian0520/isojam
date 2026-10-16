@@ -1,4 +1,4 @@
-"use strict";
+import { JobHistory } from "./history.js";
 
 const $ = (id) => document.getElementById(id);
 const storage = {
@@ -64,6 +64,14 @@ const descriptions = {
   instrumental: "A track without the vocals",
 };
 class CancelledOperation extends Error {}
+const jobHistory = new JobHistory(jsonRequest, renderHistory);
+const historyDateFormat = new Intl.DateTimeFormat(undefined, {
+  year: "numeric",
+  month: "short",
+  day: "numeric",
+  hour: "2-digit",
+  minute: "2-digit",
+});
 
 function notice(message, error = false) {
   $("notice").textContent = message;
@@ -108,11 +116,13 @@ function clearSession() {
   for (const url of state.downloadUrls) URL.revokeObjectURL(url);
   state.downloadUrls.clear();
   clearJob();
+  jobHistory.clear();
   state.file = null;
   $("audio-file").value = "";
   $("file-name").textContent = "Choose a WAV recording";
   $("file-detail").textContent = "Select a song from your computer";
   $("resume-id").value = "";
+  $("job-id-lookup").open = false;
   $("password").value = "";
   updateControls();
 }
@@ -151,9 +161,72 @@ function updateControls() {
         ? "Retry submission ↗"
         : "Separate audio ↗";
   $("resume-submit").disabled = !signedIn || state.busy;
+  $("history-refresh").hidden = !signedIn;
+  $("history-refresh").disabled = jobHistory.loading;
+  $("history-more").hidden = !signedIn || !jobHistory.nextCursor;
+  $("history-more").disabled = jobHistory.loading;
+  $("history-more").textContent = jobHistory.loading ? "Loading…" : "Load more";
+  for (const button of document.querySelectorAll(".history-job")) {
+    button.disabled = !signedIn || state.busy;
+    if (button.dataset.jobId === state.job?.id)
+      button.setAttribute("aria-current", "true");
+    else button.removeAttribute("aria-current");
+  }
 }
+
+function renderHistory() {
+  const focusedId = document.activeElement?.dataset.jobId;
+  const list = $("job-history");
+  list.replaceChildren();
+  list.setAttribute("aria-busy", String(jobHistory.loading));
+  for (const item of jobHistory.items) {
+    const row = document.createElement("li");
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "history-job";
+    button.dataset.jobId = item.id;
+    const filename = document.createElement("span");
+    filename.className = "history-filename";
+    filename.textContent = item.filename;
+    const date = document.createElement("time");
+    date.dateTime = item.created_at;
+    date.textContent = historyDateFormat.format(new Date(item.created_at));
+    const status = document.createElement("span");
+    status.className = `status-badge ${item.status}`;
+    status.textContent = item.status;
+    button.append(filename, date, status);
+    button.addEventListener("click", () => {
+      if (!state.busy) openSession(item.id);
+    });
+    row.append(button);
+    list.append(row);
+    if (item.id === focusedId) button.focus({ preventScroll: true });
+  }
+  const message = $("history-message");
+  message.textContent = !state.token
+    ? "Sign in to see your previous sessions."
+    : jobHistory.error
+      ? `Could not load sessions. ${jobHistory.error}`
+      : jobHistory.loading
+        ? "Loading sessions…"
+        : jobHistory.loaded && !jobHistory.items.length
+          ? "No sessions yet. Your recordings will appear here after submission."
+          : "";
+  message.hidden = !message.textContent;
+  message.classList.toggle("error", Boolean(jobHistory.error));
+  updateControls();
+}
+
+$("history-refresh").addEventListener("click", () => {
+  if (state.token) jobHistory.load();
+});
+$("history-more").addEventListener("click", () => {
+  if (state.token) jobHistory.load({ more: true });
+});
+
 async function jsonRequest(path, { method = "GET", body, auth = true } = {}) {
   const token = state.token;
+  const epoch = state.epoch;
   const headers = {};
   if (auth && token) headers.Authorization = `Bearer ${token}`;
   if (body && !(body instanceof FormData)) {
@@ -165,15 +238,17 @@ async function jsonRequest(path, { method = "GET", body, auth = true } = {}) {
     response = await fetch(path, { method, body, headers, cache: "no-store" });
   } catch {
     throw new Error(
-      "Could not reach the server. Check your connection and retry the same submission.",
+      "Could not reach the server. Check your connection and try again.",
     );
   }
   const data = await response.json().catch(() => ({}));
+  if (auth && (epoch !== state.epoch || token !== state.token))
+    throw new CancelledOperation();
   if (!response.ok) {
     if (auth && response.status === 401 && token === state.token) {
       clearSession();
       notice(
-        "Your sign-in expired. Sign in again, then open the session using its job ID.",
+        "Your sign-in expired. Sign in again to find your previous sessions.",
         true,
       );
       throw new CancelledOperation();
@@ -232,7 +307,8 @@ $("auth-form").addEventListener("submit", async (event) => {
     storage.set("token", state.token);
     storage.set("email", state.email);
     $("password").value = "";
-    notice("Welcome in. Choose a recording to start your session.");
+    notice("Welcome in. Choose a recording or open a previous session.");
+    jobHistory.load();
   } catch (error) {
     report(error, epoch);
   } finally {
@@ -335,8 +411,9 @@ $("upload-form").addEventListener("submit", async (event) => {
     state.jobEpoch += 1;
     showJob(data);
     notice(
-      "Your session was accepted. Save its job ID so you can return later.",
+      "Your session was accepted. You can find it again in Your sessions.",
     );
+    jobHistory.load();
     schedulePoll();
   } catch (error) {
     if (error instanceof TypeError)
@@ -368,7 +445,7 @@ function showJob(job) {
     {
       pending: "Your recording is waiting to be processed.",
       processing:
-        "Separating your recording. You can leave this tab and return using the job ID.",
+        "Separating your recording. You can return to it from Your sessions.",
       completed:
         "Your tracks are ready. Preview an instrument or download its WAV file.",
       failed:
@@ -379,6 +456,7 @@ function showJob(job) {
     $("stems").replaceChildren();
     clearPreview();
   }
+  jobHistory.updateJob(job);
   updateControls();
 }
 function schedulePoll() {
@@ -553,6 +631,7 @@ function renderStems(outputs) {
 }
 async function initialize() {
   updateControls();
+  if (state.token) jobHistory.load();
   try {
     state.info = await jsonRequest("/ui-info", { auth: false });
     const mode = state.info.processing_mode;

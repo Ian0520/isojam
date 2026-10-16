@@ -4,8 +4,12 @@ Every push and pull request runs `.github/workflows/backend.yml`. A manually
 triggered run is also available in GitHub Actions. The workflow has read-only
 repository permissions and needs no application secrets or GPU.
 
-The pipeline checks the browser JavaScript syntax with Node 24, then builds the
-real Linux x86_64 CPU image, installs hash-locked test tools in a disposable
+The pipeline checks both browser JavaScript modules with Node 24 and runs the
+history controller tests using Node's built-in test runner. These cover cursor
+continuation, refresh, failed-page retry, repeated load-more clicks, and delayed
+responses after account reset or refresh. No frontend dependencies or build step
+are needed. The pipeline then builds the real Linux x86_64 CPU image, installs
+hash-locked test tools in a disposable
 container, checks lint/formatting, and runs pytest as the
 runtime UID/GID 10001. Source is mounted read-only. Tests use temporary metadata
 and audio storage; the actual project database and container settings are unused.
@@ -29,8 +33,10 @@ and are removed afterwards. Real GPU inference is validated separately locally.
 From the repository root with Docker running:
 
 ```bash
-# Optional local browser syntax check (Node 24); also runs in CI.
+# Browser syntax and controller tests (Node 24); also run in CI.
 node --check backend/app/static/app.js
+node --check backend/app/static/history.js
+node --test backend/tests/test_job_history_browser.mjs
 docker build --platform linux/amd64 -t isojam-api:ci backend
 python3 backend/scripts/check_container.py --image isojam-api:ci
 python3 backend/scripts/smoke_container.py --image isojam-api:ci

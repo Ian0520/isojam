@@ -10,7 +10,7 @@
     />
     <title>IsoJam — Your practice studio</title>
     <link rel="stylesheet" href="/static/styles.css" />
-    <script src="/static/app.js" defer></script>
+    <script src="/static/app.js" type="module"></script>
   </head>
   <body>
     <div class="shell">
@@ -118,27 +118,58 @@
                 </button>
               </div>
             </section>
-            <section class="panel resume-panel" aria-labelledby="resume-title">
-              <h3 id="resume-title">Pick up a session</h3>
-              <p class="muted">
-                Have a job ID? Open its status and tracks here.
-              </p>
-              <form id="resume-form">
-                <label class="sr-only" for="resume-id">Job ID</label
-                ><input
-                  id="resume-id"
-                  type="text"
-                  placeholder="Paste a job ID"
-                  autocomplete="off"
-                  required
-                /><button
-                  id="resume-submit"
-                  class="button secondary full-width"
-                  type="submit"
+            <section class="panel history-panel" aria-labelledby="history-title">
+              <div class="section-heading">
+                <h3 id="history-title">Your sessions</h3>
+                <button
+                  id="history-refresh"
+                  class="text-button"
+                  type="button"
+                  hidden
                 >
-                  Open session
+                  Refresh
                 </button>
-              </form>
+              </div>
+              <p
+                id="history-message"
+                class="muted history-message"
+                role="status"
+                aria-live="polite"
+              >
+                Sign in to see your previous sessions.
+              </p>
+              <ul
+                id="job-history"
+                class="history-list"
+                aria-label="Previous sessions"
+              ></ul>
+              <button
+                id="history-more"
+                class="button secondary full-width"
+                type="button"
+                hidden
+              >
+                Load more
+              </button>
+              <details id="job-id-lookup" class="job-id-lookup">
+                <summary>Open a saved job ID</summary>
+                <form id="resume-form">
+                  <label class="sr-only" for="resume-id">Job ID</label
+                  ><input
+                    id="resume-id"
+                    type="text"
+                    placeholder="Paste a job ID"
+                    autocomplete="off"
+                    required
+                  /><button
+                    id="resume-submit"
+                    class="button secondary full-width"
+                    type="submit"
+                  >
+                    Open session
+                  </button>
+                </form>
+              </details>
             </section>
             <p class="privacy-note">
               No password is saved in your browser.<br />Your sign-in stays in

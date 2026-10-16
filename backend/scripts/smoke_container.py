@@ -79,6 +79,7 @@ def verify_browser_assets(port, processing_mode):
     for path, mime in (
         ("/", "text/html"),
         ("/static/app.js", "javascript"),
+        ("/static/history.js", "javascript"),
         ("/static/styles.css", "text/css"),
     ):
         with urlopen(f"http://127.0.0.1:{port}{path}", timeout=3) as response:
