@@ -155,6 +155,7 @@ from fastapi.testclient import TestClient
 from app.db_models import Base
 from app.database import engine
 from app.main import create_app
+from app.model_processing import process_model_job
 
 Base.metadata.create_all(engine)
 app = create_app(jwt_secret_key='test-secret-at-least-32-bytes-long', max_upload_bytes=1024, max_audio_duration_seconds=60, max_unfinished_jobs_per_user=2)
