@@ -3,14 +3,15 @@
 This image packages the API for Linux x86_64 using Python 3.12.14. It runs in
 `disabled` processing mode by default and contains no inference or test dependencies.
 Authentication, uploads, job status, and existing output downloads remain
-available; new jobs return 503. GPU workers and external job dispatch are later
-milestones. Setting `ISOJAM_PROCESSING_MODE=queued` accepts durable pending jobs
+available; new jobs return 503. Setting `ISOJAM_PROCESSING_MODE=queued` accepts durable pending jobs
 without loading a model. A one-cycle local dispatcher/fake-worker now exercises
 permission/contact, durable fake WAV bundles and atomic database publication.
 It can also recover missing publication from confirmed stop proof and a valid
-saved bundle. Real queued inference and remote control/storage remain later work.
+saved bundle. A real queued runner is available separately in the same-host CUDA
+environment; see [Real model worker](model-worker.md). This CPU image still cannot
+run inference. Remote control/storage and a packaged GPU runtime remain later work.
 The image includes the browser studio at `/`; it labels queued processing as
-demonstration audio and disabled mode as playback only.
+queued processing and disabled mode as playback only.
 
 The repository contains the recipe and application files. `docker build` creates
 an image in Docker's storage; `docker run` creates a container from that image and

@@ -370,6 +370,23 @@ class LocalResultStore:
                 "Result bundle could not be safely written"
             ) from error
 
+    def has_manifest(self, identity: ResultIdentity) -> bool:
+        """Whether any manifest entry exists, not whether it is valid.
+
+        A missing entry after confirmed execution stop permits failure handling.
+        Unreadable storage, unsafe directories and malformed entries do not.
+        """
+        try:
+            with self._directory(identity, create=False) as directory:
+                os.stat("manifest.json", dir_fd=directory, follow_symlinks=False)
+            return True
+        except FileNotFoundError:
+            return False
+        except OSError as error:
+            raise ResultValidationError(
+                "Manifest presence could not be checked"
+            ) from error
+
     def verify_bundle(
         self, identity: ResultIdentity, *, profile: ResultProfile = FAKE_RESULT_PROFILE
     ) -> VerifiedBundle:

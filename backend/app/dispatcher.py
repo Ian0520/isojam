@@ -11,12 +11,20 @@ from sqlalchemy import Engine
 from app.execution import (
     ExecutionAdapter,
     LocalFakeWorkerAdapter,
+    WorkerExecutionFailed,
     WorkerInvocation,
     WorkerLaunchError,
 )
+from app.model_execution import LocalModelWorkerAdapter
 from app.publication import publish_result
 from app.repositories import job_reservations as reservations
-from app.results import LocalResultStore, ResultIdentity, ResultValidationError
+from app.results import (
+    FAKE_RESULT_PROFILE,
+    LocalResultStore,
+    ResultIdentity,
+    ResultProfile,
+    ResultValidationError,
+)
 
 
 @dataclass(frozen=True)
@@ -35,6 +43,7 @@ def _publication_status(
     invocation_id: UUID,
     store: LocalResultStore,
     *,
+    profile: ResultProfile,
     busy_timeout_ms: int,
 ) -> str:
     """Keep normal delivery and recovery on the same verification/commit boundary."""
@@ -44,6 +53,7 @@ def _publication_status(
             token,
             invocation_id=invocation_id,
             store=store,
+            profile=profile,
             busy_timeout_ms=busy_timeout_ms,
         )
     except ResultValidationError:
@@ -62,6 +72,7 @@ def reconcile_once(
     engine: Engine,
     store: LocalResultStore,
     *,
+    profile: ResultProfile = FAKE_RESULT_PROFILE,
     busy_timeout_ms: int = 1000,
 ) -> DispatchResult | None:
     """Recover one saved bundle from a stopped invocation without launching work.
@@ -88,15 +99,34 @@ def reconcile_once(
         token,
         candidate.invocation_id,
         store,
+        profile=profile,
         busy_timeout_ms=busy_timeout_ms,
     )
+    if status == "result_invalid" and candidate.execution_exit_code != 0:
+        try:
+            if not store.has_manifest(identity):
+                failed = reservations.fail_stopped_attempt(
+                    engine,
+                    token,
+                    invocation_id=candidate.invocation_id,
+                    busy_timeout_ms=busy_timeout_ms,
+                )
+                status = "failed" if failed else "failure_denied"
+        except reservations.ReservationBusyError:
+            raise
+        except ResultValidationError:
+            pass  # Unreadable storage is not evidence that no result exists.
+        except Exception:
+            status = "failure_unresolved"
     return DispatchResult(
         "recovered" if status == "completed" else status,
         token.job_id,
         token.attempt_id,
         candidate.invocation_id,
         candidate.worker_pid,
-        store.manifest_key(identity),
+        None
+        if status in {"failed", "failure_denied", "failure_unresolved"}
+        else store.manifest_key(identity),
     )
 
 
@@ -105,6 +135,7 @@ def dispatch_once(
     adapter: ExecutionAdapter,
     *,
     dispatcher_id: UUID,
+    profile: ResultProfile = FAKE_RESULT_PROFILE,
     reservation_ttl_seconds: int = 60,
     authorization_ttl_seconds: int = 300,
     busy_timeout_ms: int = 1000,
@@ -118,13 +149,17 @@ def dispatch_once(
     # Validate settings before recovery or reservation can persist any work.
     if not isinstance(dispatcher_id, UUID):
         raise ValueError("dispatcher_id must be a UUID")
+    if not isinstance(profile, ResultProfile):
+        raise ValueError("profile must be a trusted ResultProfile")
     for name, value in (
         ("reservation_ttl_seconds", reservation_ttl_seconds),
         ("authorization_ttl_seconds", authorization_ttl_seconds),
     ):
         if type(value) is not int or not 1 <= value <= 3600:
             raise ValueError(f"{name} must be an integer from 1 to 3600")
-    recovered = reconcile_once(engine, adapter.results, busy_timeout_ms=busy_timeout_ms)
+    recovered = reconcile_once(
+        engine, adapter.results, profile=profile, busy_timeout_ms=busy_timeout_ms
+    )
     if recovered is not None:
         return recovered
     token = reservations.reserve_next_job(
@@ -147,6 +182,15 @@ def dispatch_once(
     # this external boundary. No write lock spans worker launch or waiting.
     try:
         report = adapter.submit(invocation)
+    except WorkerExecutionFailed:
+        return reconcile_once(
+            engine, adapter.results, profile=profile, busy_timeout_ms=busy_timeout_ms
+        ) or DispatchResult(
+            "failure_unresolved",
+            token.job_id,
+            token.attempt_id,
+            invocation.invocation_id,
+        )
     except WorkerLaunchError:
         return DispatchResult(
             "submission_unresolved",
@@ -161,6 +205,7 @@ def dispatch_once(
             token,
             invocation.invocation_id,
             adapter.results,
+            profile=profile,
             busy_timeout_ms=busy_timeout_ms,
         )
     return DispatchResult(
@@ -189,14 +234,18 @@ def _integer_range(minimum: int, maximum: int):
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--once", action="store_true", required=True)
-    parser.add_argument("--adapter", choices=["local-fake"], required=True)
+    parser.add_argument(
+        "--adapter", choices=["local-fake", "local-model"], required=True
+    )
     parser.add_argument(
         "--reconcile-only",
         action="store_true",
         help="Recover at most one stopped attempt without launching a worker",
     )
     parser.add_argument(
-        "--worker-timeout-seconds", type=_integer_range(1, 60), default=30
+        "--worker-timeout-seconds",
+        type=_integer_range(1, 7200),
+        help="Default: 30 for local-fake, 1800 for local-model (model maximum: 7200)",
     )
     parser.add_argument(
         "--reservation-ttl-seconds", type=_integer_range(1, 3600), default=60
@@ -208,17 +257,34 @@ def main() -> int:
         "--busy-timeout-ms", type=_integer_range(0, 30000), default=1000
     )
     args = parser.parse_args()
+    if (
+        args.adapter == "local-fake"
+        and args.worker_timeout_seconds is not None
+        and args.worker_timeout_seconds > 60
+    ):
+        parser.error("local-fake worker timeout must be from 1 to 60 seconds")
     # Commands do not start FastAPI's lifespan or load an inference model.
     from app.database import engine
 
     try:
-        adapter = LocalFakeWorkerAdapter(
-            engine, timeout_seconds=args.worker_timeout_seconds
+        adapter_type = (
+            LocalFakeWorkerAdapter
+            if args.adapter == "local-fake"
+            else LocalModelWorkerAdapter
+        )
+        adapter = (
+            adapter_type(engine)
+            if args.worker_timeout_seconds is None
+            else adapter_type(engine, timeout_seconds=args.worker_timeout_seconds)
+        )
+        profile = (
+            FAKE_RESULT_PROFILE if args.adapter == "local-fake" else adapter.profile
         )
         if args.reconcile_only:
             result = reconcile_once(
                 engine,
                 adapter.results,
+                profile=profile,
                 busy_timeout_ms=args.busy_timeout_ms,
             ) or DispatchResult("idle")
         else:
@@ -226,6 +292,7 @@ def main() -> int:
                 engine,
                 adapter,
                 dispatcher_id=uuid4(),
+                profile=profile,
                 reservation_ttl_seconds=args.reservation_ttl_seconds,
                 authorization_ttl_seconds=args.authorization_ttl_seconds,
                 busy_timeout_ms=args.busy_timeout_ms,

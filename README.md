@@ -7,7 +7,7 @@ instruments with BS-RoFormer, then preview or download the stems in a browser.
 
 IsoJam is a backend-focused personal project built with Python, FastAPI,
 SQLAlchemy, SQLite and a pretrained audio model. It includes a working local GPU
-demo and a separate containerized worker exercise for learning reliable delivery.
+demo and a separate queued worker with durable execution and publication records.
 
 ![IsoJam browser studio after real GPU separation](docs/screenshots/studio.png)
 
@@ -27,7 +27,8 @@ demo and a separate containerized worker exercise for learning reliable delivery
 - Seven outputs: vocals, drums, bass, guitar, piano, other and instrumental.
 - Persistent metadata with Alembic migrations, per-user unfinished-job limits and idempotent job submission.
 - A non-root CPU API container with hash-locked dependencies and persistent storage.
-- A separate queued fake-worker path with execution authorization, verified result bundles, atomic publication and restart recovery.
+- A separate queued real-model worker with execution authorization, heartbeats, verified result bundles, atomic publication and restart reconciliation.
+- An explicit fake worker for CPU-only coordination and container checks.
 - GitHub Actions covering lint, formatting, tests, container packaging and interrupted-publication recovery.
 
 ## Two processing paths
@@ -35,13 +36,13 @@ demo and a separate containerized worker exercise for learning reliable delivery
 | Path | Purpose | Execution and recovery |
 | --- | --- | --- |
 | `local` | Real source separation in the browser | Loads the GPU model once; runs FastAPI background tasks. Interrupted inference is not resumed after restart. |
-| `queued` | Container and reliability exercise | A separate dispatcher runs a fake worker that makes test WAVs. It can recover publication after confirmed worker exit without launching another execution. |
+| `queued` | Separate worker execution | A Linux dispatcher runs the real model with `local-model`, or test WAVs with the explicit `local-fake` adapter. Saved results can be published after confirmed exit without repeating inference. |
 | `disabled` | CPU API and existing-result access | Authentication, uploads, status and downloads work; new jobs return 503. |
 
 The CPU Docker image defaults to `disabled` and does **not** contain the model.
-The real GPU model is **not yet connected to the queued worker path**. An unknown
-worker exit keeps its queue slot occupied; an old heartbeat alone is not enough
-to authorize replacement.
+Real queued inference runs in the existing CUDA environment on the SQLite host;
+see [Real model worker](docs/model-worker.md). An unknown worker exit keeps its
+queue slot occupied; an old heartbeat alone is not enough to authorize replacement.
 
 ```mermaid
 flowchart LR
@@ -52,8 +53,8 @@ flowchart LR
     Model --> Stems[Real stems]
     Stems --> Uploads
     DB -->|queued mode| Dispatcher[Separate dispatcher]
-    Dispatcher --> Fake[Fake worker]
-    Fake --> Bundle[Verified test bundle]
+    Dispatcher --> Worker[Real model or explicit fake worker]
+    Worker --> Bundle[Verified result bundle]
     Bundle --> Publish[Atomic publication / recovery]
     Publish --> DB
 ```
@@ -102,8 +103,9 @@ tokens, which expire after 30 minutes; refresh tokens are not implemented.
 Preview fetches a whole authenticated WAV before playing it.
 
 Local inference has no global GPU scheduling limit or restart recovery. The
-queued path currently processes fake audio, uses one global slot, and requires
-explicit dispatcher cycles. AWS hosting, remote GPU execution, MySQL and Redis
+queued path uses one global slot and requires explicit dispatcher cycles. Known
+nonzero exits without a manifest can be finalized as failed; uncertain execution
+and damaged saved manifests require inspection. AWS hosting, remote GPU execution, MySQL and Redis
 integration remain future work. Custom backing-track mixing and speed adjustment
 are not yet implemented.
 
@@ -116,5 +118,6 @@ are not yet implemented.
 - [Operations and troubleshooting](docs/operations.md)
 - [Design notes and tradeoffs](docs/design-notes.md)
 - [Worker design](docs/worker-design.md)
+- [Real queued model worker](docs/model-worker.md)
 - [Original model compatibility spike](docs/model-spike.md)
 - [Product direction](docs/project-scope.md)

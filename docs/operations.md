@@ -54,8 +54,9 @@ changing an image alone does not undo data migrations.
 | Docker commands only show a client | Start Docker Desktop, use Linux containers and enable the Ubuntu WSL integration. |
 | Startup fails before serving HTTP | Read logs for missing/blank JWT secret, invalid paths or limits, or un-applied migrations. Keep the same signing secret across replacements. |
 | Local startup cannot load the model | Confirm the inference extra is installed in the active environment, CUDA is available, and the GPU environment matches the model spike. The CPU image deliberately has no model. |
-| New jobs return 503 | Check `ISOJAM_PROCESSING_MODE`. The CPU image defaults to `disabled`; use local GPU mode for real separation or queued mode for the fake exercise. |
-| Browser says Demo queue | It is queued mode. Run an explicit fake dispatcher cycle against the same database and audio directory. Its WAVs are test artifacts. |
+| New jobs return 503 | Check `ISOJAM_PROCESSING_MODE`. The CPU image defaults to `disabled`; local mode or queued mode with a CUDA worker can provide real separation. |
+| Browser says Queued processing | Run an explicit `local-model` dispatcher cycle on the same Linux host with matching database, audio storage and limits. `local-fake` is only for test artifacts. |
+| Real model worker fails | Inspect `worker-logs/<invocation>-<launch>.log` inside audio storage. Check CUDA, cached model assets and inference dependencies. A confirmed nonzero exit without a manifest becomes failed; no automatic inference retry occurs. |
 | Upload returns 413 / 422 | Check byte/duration limits or readable mono/stereo WAV content. Renaming a file is insufficient; the server decodes and validates it. |
 | Browser sign-in expires | Log in again and select the job from Your sessions, or use the saved-ID lookup. Access tokens expire after 30 minutes; there is no refresh-token flow. |
 | Job submission returns 429 | The user has reached the configured unfinished-job allowance. Inspect existing jobs before creating more work. |
@@ -64,7 +65,7 @@ changing an image alone does not undo data migrations.
 | Stopped fake worker has saved outputs but job is still processing | Run `python -m app.dispatcher --once --adapter local-fake --reconcile-only` with matching storage/database settings. Valid saved stop proof and the entire verified bundle are required. |
 | Dispatcher reports `database_busy` | Another SQLite writer held the bounded lock wait. Diagnose the writer and retry the cycle; this is not permission to launch another worker. |
 | Exit is unknown or bundle is invalid | Keep the attempt occupied and inspect evidence. Heartbeat age, timeout, file presence or a duplicate child's exit cannot safely authorize replacement. |
-| Local inference was interrupted | Local FastAPI background work is not recovered. Preserve the job as evidence; restarting the API does not resume it. Durable real-worker recovery is future work. |
+| Local inference was interrupted | Local FastAPI background work is not recovered. Preserve the job as evidence; restarting the API does not resume it. The queued worker can reconcile saved stop evidence and results, but cannot infer missing stop proof. |
 
 The current queue prioritizes avoiding duplicate execution over automatically
 recovering every failure. Publication recovery is implemented. Automatic failure

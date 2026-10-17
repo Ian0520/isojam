@@ -2,10 +2,13 @@
 
 ## Current boundary
 
-The first slice on `feat/model-worker` adds `app.model_processing.process_model_job`.
-It produces verified files for an already-authorized queued invocation. Dispatcher
-and worker CLI integration are not implemented in this slice: the queued adapter
-still runs the fake worker, and local API processing keeps its existing behavior.
+The queued path supports explicit `local-model` execution on the SQLite host.
+`app.model_processing.process_model_job` produces verified files,
+`app.model_worker` obtains execution permission and owns the model lifecycle, and
+`LocalModelWorkerAdapter` launches and waits for that worker. The dispatcher then
+publishes the verified bundle or finalizes a confirmed unsuccessful execution.
+`local-fake` remains available for CPU-only exercises. Local API background
+processing keeps its existing behavior. There is no continuous service loop yet.
 
 For the initial same-host release, retain the SQLite queue and start with one
 active inference subprocess. This reuses the existing reservation, execution and
@@ -13,6 +16,106 @@ publication rules. It also leaves their maintenance with this project. Adopting
 Celery remains a later decision, rather than combining a queue migration with
 model integration. A separate process per job allows confirmed exit before
 publication, at the cost of loading the model for each job.
+
+## Run one real queued job
+
+Use the existing Python 3.12 inference environment on Linux/WSL2, CUDA and cached
+BS-RoFormer-SW assets. Apply the existing Alembic migrations first; this slice
+requires no new migration or dependency. The CPU API Docker image has no Torch
+or model dependencies and cannot run this worker.
+
+For this initial workflow, run both processes directly on the same Linux host.
+In both shells, use matching absolute `ISOJAM_DATABASE_PATH` and
+`ISOJAM_AUDIO_STORAGE_DIR`, plus matching upload/duration limits. From `backend`,
+start the API with its signing secret configured:
+
+```bash
+export ISOJAM_PROCESSING_MODE=queued
+uvicorn app.main:app --host 127.0.0.1 --port 8000
+```
+
+Submit a WAV through the browser, then in the other activated inference shell:
+
+```bash
+python -m app.dispatcher --once --adapter local-model
+```
+
+One cycle handles one saved recovery or one new delivery. Run another cycle for
+the next job. Keep `local-fake` on disposable exercise data, rather than selecting
+it for personal recordings. The chosen adapter supplies the trusted verification
+profile; do not switch adapters/profiles while attempts remain unfinished.
+
+Model wait defaults to 1,800 seconds, including startup, loading, inference and
+cleanup; `--worker-timeout-seconds` permits 1-7,200. Fake wait remains 30 by default,
+maximum 60. These limits differ from the 300-second execution-grant deadline:
+the worker obtains its grant before loading the model. Expiry cannot cancel or
+replace an already-authorized execution.
+
+For recovery without launching any new work:
+
+```bash
+python -m app.dispatcher --once --adapter local-model --reconcile-only
+```
+
+This recovery command needs the ordinary CPU API dependencies and matching
+configuration/storage, not a loaded model. It does not import Torch.
+
+## Worker lifetime and diagnostics
+
+Every delivery gets a fresh launch UUID. The worker atomically obtains permission
+using its attempt/invocation/generation, launch UUID and actual PID. A denial or
+lost grant acknowledgement never reaches model loading. The initial heartbeat
+must succeed, followed by contact every 15 seconds while loading, processing and
+closing the model. Transient periodic contact errors are logged; heartbeats grant
+no additional execution and their absence never releases capacity. Explicit
+rejection prevents starting inference if seen after loading, and prevents a ready
+report if seen after processing. Publication always rechecks database authority.
+
+The controller gives each worker a new Linux session/process group. The pinned
+eager CUDA path was inspected and runs inference in the direct worker process;
+it does not use multiprocessing, distributed inference or `torch.compile`.
+Normal exit requires the group to be gone before stop proof is saved. On timeout
+the controller sends SIGKILL to the group and waits at most five seconds. Failure
+to confirm termination, a surviving group member or failure to commit stop proof
+keeps capacity occupied. An interrupted controller cleans up with a bounded wait
+but does not invent durable proof. Arbitrary descendants escaping their session
+are outside this trusted runner's contract; this is not a container/cgroup
+isolation boundary. Revisit the lifetime contract when changing the inference
+backend or adding subprocess-based preprocessing.
+
+The control reply is one bounded JSON message. Before model loading, the worker
+duplicates its original stdout descriptor for that reply, then redirects OS
+stdout to stderr. Python prints and native library stdout writes therefore go
+to `ISOJAM_AUDIO_STORAGE_DIR/worker-logs/<invocation>-<launch>.log`, not into JSON.
+Files are created exclusively with mode 0600; inherited login signing secrets
+are removed from the worker environment. Log retention and total disk quotas
+remain deployment operations work.
+
+## Completion versus confirmed failure
+
+Verification still occurs outside database transactions. The trusted model
+profile is passed through normal publication and restart reconciliation; manifests
+never select their own policy. The shared report parser checks the actual child
+PID, invocation IDs, exit/status pairing and reply size for both local adapters.
+
+| Durable evidence | Outcome |
+| --- | --- |
+| Confirmed stop plus a complete valid bundle, including a nonzero exit after saving it | Publish completion; never repeat inference |
+| Confirmed nonzero exit with no manifest entry | Atomically mark the current attempt and job failed, release capacity; no automatic retry |
+| Existing damaged manifest, unreadable storage, or zero exit without valid results | Retain occupied state for inspection |
+| Missing stop proof or surviving execution group | Retain occupied state; do not infer exit from files, timeouts or heartbeats |
+
+Failure finalization rechecks identity, current dispatcher generation, latest
+attempt, processing state, nonzero stop evidence and absence of database output
+records under `BEGIN IMMEDIATE`. Both failed states commit together. Competing or
+repeated identical finalizers acknowledge the same failure without rewriting its
+timestamps. Failed commits roll back both states. Partial files are preserved;
+failure does not itself launch another attempt. Filesystem absence is inspected
+before that transaction, on trusted storage with no remaining invocation writer.
+
+`failed`, `failure_denied`, `failure_unresolved` and `result_invalid` return CLI
+exit 1; `idle`, `completed` and `recovered` return 0. Database contention returns
+75. A recovery/failure outcome ends that cycle rather than launching another job.
 
 ## Processing flow
 
@@ -106,14 +209,49 @@ storage was removed after the check. This is one processing-boundary smoke, not
 an end-to-end queued-worker, long-song, concurrency or audio-quality benchmark.
 Timings exclude interpreter startup and earlier imports and are not an SLA.
 
+## Dispatcher verification on 2026-10-17
+
+The actual `local-model` CLI completed a four-second original synthetic stereo
+WAV on the RTX 4060 Laptop GPU, using a freshly migrated disposable SQLite
+database and separate temporary audio storage. The entire dispatcher process,
+worker startup, model loading, inference, exit confirmation and publication took
+11.556 seconds. All seven outputs totaled 9,879,016 bytes. The recorded child PID
+was gone, its saved exit code was zero, its attempt was succeeded, and seven
+output rows and the completed job were visible together. The input hash was
+unchanged. A second cycle was idle and created no extra launch log.
+
+This exercised actual descriptor-level log separation: model diagnostics appeared
+in the invocation log and the dispatcher stdout remained a single JSON reply.
+Both the database and audio were removed after the check; no existing user data
+was used. The measurement is one short same-host smoke, not a throughput or
+long-song benchmark. API restart and interrupted real inference remain the next
+end-to-end checks.
+
+CPU model substitutes also exercise actual child processes without importing
+Torch, including failure before results, failure during cleanup after saved
+results, killed workers, duplicate delivery and failed stop-proof commits.
+Guarded database tests run against both ORM-created and Alembic-migrated schemas,
+including competing failure finalizers and transaction rollback. The targeted
+regression group passed 233 tests; the complete backend suite passed 1,178 tests
+in 291.50 seconds. Browser history passed all nine existing tests. JavaScript
+syntax, Ruff lint/format across 97 maintained Python files, and whitespace checks
+also passed.
+
+The rebuilt `isojam-api:model-worker-check` CPU image passed all 1,178 tests again
+under hash-locked dependencies as UID/GID 10001, with Python 3.12.14 and no Torch
+installed (366.05 seconds). Both existing container smokes passed: disabled API
+data survived replacement, and queued fake execution recovered intentionally
+interrupted publication, then served all seven owned WAVs with exact hashes and
+preserved keyed submission replay. Disposable labeled containers/volumes were
+cleaned up by the scripts. This validates the CPU API image; it does not package
+the GPU environment into that image.
+
 ## Next slices
 
-Connect an authorized real worker and an explicit adapter to the dispatcher.
-Keep model diagnostics separate from the bounded control reply, replace the
-fake worker's short timeout with an inference-appropriate limit, establish actual
-process-lifetime/termination guarantees, and distinguish confirmed failure from
-unknown execution before releasing occupied capacity. Add the supervised service
-loop and test real completion, API restart and worker interruption end to end.
+Add the supervised service loop and test real completion, API restart and worker
+interruption end to end. Establish the accepted-rate/resampling policy before
+claiming broad input-rate quality. Hosted deployment, a GPU container runtime,
+disk/log retention and operator handling of unknown execution remain separate work.
 
 General lesson: a model returning successfully is only one step in a job's
 lifecycle. Validate its artifacts, persist the evidence, confirm execution ended

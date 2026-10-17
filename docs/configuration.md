@@ -186,13 +186,15 @@ authentication, and the unfinished-job allowance still apply. Replaying a receip
 returns the original job even if the API's processing mode has changed; it does
 not change that job's backend or schedule it again.
 
-Queued jobs remain pending until a dispatcher reserves and submits them. The
-current local fake runner authorizes one invocation, saves seven dummy WAVs and
-publishes their output records with completion. Pending/processing jobs count
+Queued jobs remain pending until a dispatcher reserves and submits them. Use
+`--adapter local-model` for real inference in the same-host CUDA environment, or
+the explicit `local-fake` adapter for dummy WAVs in CPU-only checks.
+See [Real model worker](model-worker.md) for setup and failure behavior.
+Pending/processing jobs count
 toward the allowance and cannot serve outputs (409); completed jobs expose owned
-downloads. Queued mode remains a development exercise until real inference and hosted
-storage/control are connected. Publication recovery for confirmed stopped fake
-workers is implemented; uncertain executions remain occupied.
+downloads. Publication recovery for confirmed stopped workers is implemented;
+uncertain executions remain occupied. Remote storage/control, a supervised polling
+loop and hosted deployment remain separate work.
 
 ### Local dispatcher coordination exercise
 
@@ -267,6 +269,10 @@ child, records confirmed exit when it matches the authorized process, and retain
 A crash before committing that proof leaves termination unknown, even if files
 exist. Migrating older rows never invents exit proof. Existing identical completed
 publications remain acknowledgeable without adding historical stop evidence.
+Reconciliation can now finalize a confirmed nonzero exit with no manifest as
+`failed`, releasing capacity without repeating inference. Existing invalid
+manifests and unreadable storage retain their occupied state. This rule also
+applies to the fake transport on a later recovery cycle.
 There is no automatic inference retry, timeout-based release, expired-reservation
 scanner or polling loop. Recovery uses a stored authority snapshot and rechecks it
 after verification; it never transfers execution ownership. CLI defaults are

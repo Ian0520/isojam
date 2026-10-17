@@ -36,6 +36,7 @@ class RecoverableAttempt:
     reservation: JobReservation
     invocation_id: UUID
     worker_pid: int | None
+    execution_exit_code: int
 
 
 @contextmanager
@@ -220,6 +221,7 @@ def find_recoverable_attempt(
                 JobAttempt.reservation_expires_at,
                 JobAttempt.invocation_id,
                 JobAttempt.local_worker_pid,
+                JobAttempt.execution_exit_code,
             )
             .where(
                 JobAttempt.phase == "running",
@@ -238,7 +240,7 @@ def find_recoverable_attempt(
         ).one_or_none()
         if row is None:
             return None
-        return RecoverableAttempt(JobReservation(*row[:6]), row[6], row[7])
+        return RecoverableAttempt(JobReservation(*row[:6]), row[6], row[7], row[8])
 
 
 def reclaim_reservation(
@@ -602,6 +604,101 @@ def record_execution_stopped(
                 updated_at=max(stopped, attempt["updated_at"]),
             )
         )
+        return True
+
+
+def fail_stopped_attempt(
+    engine: Engine,
+    reservation: JobReservation,
+    *,
+    invocation_id: UUID,
+    busy_timeout_ms: int = 1000,
+) -> bool:
+    """Atomically fail a stopped, unsuccessful invocation with no published result.
+
+    The trusted caller must first establish that no manifest exists in storage.
+    Recheck current authority, latest attempt and durable nonzero exit under the
+    write lock. Never infer termination from heartbeat age or a start deadline.
+    This releases capacity but does not authorize an inference retry. An identical
+    failure acknowledgement preserves timestamps; conflicting state is denied.
+    """
+    _validate_reservation(reservation)
+    _validate_invocation_id(invocation_id)
+    with _reservation_transaction(engine, busy_timeout_ms) as connection:
+        attempt = (
+            connection.execute(
+                select(JobAttempt.__table__).where(
+                    JobAttempt.id == reservation.attempt_id,
+                    JobAttempt.job_id == reservation.job_id,
+                    JobAttempt.attempt_number == reservation.attempt_number,
+                    JobAttempt.dispatcher_id == reservation.dispatcher_id,
+                    JobAttempt.dispatcher_generation
+                    == reservation.dispatcher_generation,
+                    JobAttempt.invocation_id == invocation_id,
+                    JobAttempt.started_at.is_not(None),
+                    JobAttempt.execution_stopped_at.is_not(None),
+                    JobAttempt.execution_exit_code != 0,
+                    or_(
+                        and_(
+                            JobAttempt.phase == "running",
+                            JobAttempt.finished_at.is_(None),
+                            _current_queued_attempt("processing"),
+                        ),
+                        and_(
+                            JobAttempt.phase == "failed",
+                            JobAttempt.finished_at.is_not(None),
+                            _current_queued_attempt("failed"),
+                        ),
+                    ),
+                )
+            )
+            .mappings()
+            .one_or_none()
+        )
+        if attempt is None:
+            return False
+        if (
+            attempt["result_manifest_key"] is not None
+            or attempt["result_manifest_sha256"] is not None
+            or connection.scalar(
+                select(JobOutput.job_id)
+                .where(JobOutput.job_id == reservation.job_id)
+                .limit(1)
+            )
+            is not None
+        ):
+            return False
+        if attempt["phase"] == "failed":
+            return True
+        finished = max(
+            _utc_now(),
+            attempt["started_at"],
+            attempt["execution_stopped_at"],
+            attempt["last_heartbeat_at"] or attempt["started_at"],
+        )
+        connection.execute(
+            update(JobAttempt)
+            .where(JobAttempt.id == reservation.attempt_id)
+            .values(
+                phase="failed",
+                finished_at=finished,
+                updated_at=max(finished, attempt["updated_at"]),
+            )
+        )
+        changed = connection.scalar(
+            update(Job)
+            .where(
+                Job.id == reservation.job_id,
+                Job.execution_backend == "queued",
+                Job.status == "processing",
+            )
+            .values(status="failed", updated_at=func.max(finished, Job.updated_at))
+            .returning(Job.id)
+        )
+        if changed is None:
+            raise RuntimeError(
+                "Failure finalization could not update its processing job"
+            )
         return True
 
 

@@ -5,9 +5,9 @@ The document itself changes no runtime behavior. Hosting provider and monthly bu
 design does not provision or purchase anything.
 
 Current real-model integration and the initial same-host release decision are
-tracked in [Real model worker](model-worker.md). That work starts with verified
-inference bundles; the fake queued adapter remains in use until its integration
-slice is complete. The remote-worker sections below describe the broader design.
+tracked in [Real model worker](model-worker.md). The explicit `local-model`
+adapter now runs inference on the SQLite host; `local-fake` remains available for
+CPU exercises. The remote-worker sections below describe the broader design.
 
 ## Recommendation and reading guide
 

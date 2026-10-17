@@ -637,13 +637,13 @@ async function initialize() {
     const mode = state.info.processing_mode;
     $("service-status").textContent = {
       local: "Separation ready",
-      queued: "Demo queue",
+      queued: "Queued processing",
       disabled: "Playback only",
     }[mode];
     $("mode-note").textContent = {
       local: "Choose a recording and let the model find its instrument tracks.",
       queued:
-        "This queue currently uses a demonstration worker that produces test audio. Real separation is available in local mode.",
+        "Submitted recordings wait for an available worker. You can return to your session while processing continues.",
       disabled:
         "New separation is unavailable on this server. Sign in to listen to an existing completed session.",
     }[mode];
