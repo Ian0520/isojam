@@ -75,10 +75,11 @@ def wait_for_health(name, port):
     raise RuntimeError("API container did not become ready within 30 seconds")
 
 
-def verify_browser_assets(port, processing_mode):
+def verify_browser_assets(port, processing_mode, registration_mode):
     for path, mime in (
         ("/", "text/html"),
         ("/static/app.js", "javascript"),
+        ("/static/auth.js", "javascript"),
         ("/static/history.js", "javascript"),
         ("/static/styles.css", "text/css"),
     ):
@@ -89,7 +90,11 @@ def verify_browser_assets(port, processing_mode):
             if not body:
                 raise RuntimeError(f"Browser asset {path} is empty")
     status, info = request(port, "GET", "/ui-info")
-    if status != 200 or info.get("processing_mode") != processing_mode:
+    if (
+        status != 200
+        or info.get("processing_mode") != processing_mode
+        or info.get("registration_mode") != registration_mode
+    ):
         raise RuntimeError("Browser runtime information disagrees with API mode")
 
 
@@ -159,6 +164,8 @@ import re
 
 assert os.getuid() == 10001
 assert os.environ['ISOJAM_PROCESSING_MODE'] in {'disabled', 'queued'}
+from app.config import get_registration_mode
+assert get_registration_mode() == 'closed'
 assert os.environ['ISOJAM_DATABASE_PATH'] == '/var/lib/isojam/metadata/isojam.db'
 assert os.environ['ISOJAM_AUDIO_STORAGE_DIR'] == '/var/lib/isojam/audio'
 for package in ['torch', 'bs_roformer', 'pytest', 'httpx2', 'ruff']:
@@ -197,16 +204,35 @@ print('Non-root runtime, pinned dependencies, and volume permissions passed')
             "email": "container@example.com",
             "password": "correct-horse-battery-staple",
         }
+        invitation = json.loads(
+            docker(
+                "run",
+                "--rm",
+                *common,
+                args.image,
+                "python",
+                "-m",
+                "app.invitations",
+                "create",
+                credentials["email"],
+                env=env,
+            ).stdout
+        )
+        invitation_code = invitation.pop("code")
+        invitation_hash = hashlib.sha256(invitation_code.encode()).hexdigest()
         payload = make_wav()
         upload_id = None
         job_id = None
-        for phase in ("first-start", "replacement"):
+        for phase in ("first-start", "replacement", "registration-closed"):
+            registration_mode = "closed" if phase == "registration-closed" else "invite"
             docker(
                 "run",
                 "--detach",
                 "--name",
                 name,
                 *common,
+                "--env",
+                "ISOJAM_REGISTRATION_MODE=" + registration_mode,
                 "--publish",
                 "127.0.0.1::8000",
                 args.image,
@@ -221,10 +247,56 @@ print('Non-root runtime, pinned dependencies, and volume permissions passed')
             assert binding["HostIp"] == "127.0.0.1"
             port = int(binding["HostPort"])
             wait_for_health(name, port)
-            verify_browser_assets(port, args.processing_mode)
+            verify_browser_assets(port, args.processing_mode, registration_mode)
             if phase == "first-start":
-                status, _ = post_json(port, "/register", credentials)
+                for invalid in (
+                    credentials,
+                    {**credentials, "invitation_code": "wrong-code"},
+                    {
+                        **credentials,
+                        "email": "not-invited@example.com",
+                        "invitation_code": invitation_code,
+                    },
+                ):
+                    status, body = post_json(port, "/register", invalid)
+                    assert status == 403 and body == {
+                        "detail": "Invitation is invalid or unavailable"
+                    }
+                status, _ = post_json(
+                    port,
+                    "/register",
+                    {**credentials, "invitation_code": invitation_code},
+                )
                 assert status == 201, f"Registration returned {status}"
+                print(
+                    "Invitation-only registration rejected invalid codes and accepted its owner",
+                    flush=True,
+                )
+            if phase != "registration-closed":
+                status, body = post_json(
+                    port,
+                    "/register",
+                    {**credentials, "invitation_code": invitation_code},
+                )
+                assert status == 403 and body == {
+                    "detail": "Invitation is invalid or unavailable"
+                }
+                if phase == "replacement":
+                    print(
+                        "Invitation remained consumed after API replacement", flush=True
+                    )
+            else:
+                for email in (credentials["email"], "not-invited@example.com"):
+                    status, body = post_json(
+                        port, "/register", {**credentials, "email": email}
+                    )
+                    assert status == 403 and body == {
+                        "detail": "Registration is closed"
+                    }
+                print(
+                    "Replacement closed registration for existing and new emails",
+                    flush=True,
+                )
             status, login = post_json(port, "/login", credentials)
             assert status == 200, f"Login returned {status}"
             headers = {"Authorization": "Bearer " + login["access_token"]}
@@ -285,6 +357,7 @@ print('Non-root runtime, pinned dependencies, and volume permissions passed')
             docker("rm", name)
 
         persistence_check = """
+from datetime import datetime, timedelta
 from pathlib import Path
 import hashlib
 import sqlite3
@@ -292,6 +365,15 @@ import sys
 
 with sqlite3.connect('/var/lib/isojam/metadata/isojam.db') as connection:
     assert connection.execute('select count(*) from users').fetchone()[0] == 1
+    invitation = connection.execute(
+        'select email, code_hash, created_at, expires_at, used_at from registration_invitations where id=?',
+        (sys.argv[5].replace('-', ''),),
+    ).fetchone()
+    assert invitation[:2] == ('container@example.com', sys.argv[6])
+    assert datetime.fromisoformat(invitation[3]) - datetime.fromisoformat(invitation[2]) == timedelta(days=7)
+    assert invitation[4] is not None
+    assert datetime.fromisoformat(invitation[2]) <= datetime.fromisoformat(invitation[4]) < datetime.fromisoformat(invitation[3])
+    assert connection.execute('select count(*) from registration_invitations').fetchone()[0] == 1
     queued = sys.argv[3] == 'queued'
     assert connection.execute('select count(*) from jobs').fetchone()[0] == int(queued)
     assert connection.execute('select count(*) from job_submission_receipts').fetchone()[0] == int(queued)
@@ -306,7 +388,7 @@ with sqlite3.connect('/var/lib/isojam/metadata/isojam.db') as connection:
     stored = rows[0][1]
 path = Path('/var/lib/isojam/audio/uploads') / stored
 assert hashlib.sha256(path.read_bytes()).hexdigest() == sys.argv[2]
-print('Account, upload, job/receipt state, and exact WAV bytes survived container replacement')
+print('Account, invitation hash/expiry, upload, job/receipt state, and exact WAV bytes survived container replacement')
 """
         result = docker(
             "run",
@@ -320,6 +402,8 @@ print('Account, upload, job/receipt state, and exact WAV bytes survived containe
             hashlib.sha256(payload).hexdigest(),
             args.processing_mode,
             job_id or "",
+            invitation["id"],
+            invitation_hash,
             env=env,
         )
         print(result.stdout.strip(), flush=True)
@@ -478,7 +562,7 @@ print(__import__('json').dumps({artifact.stem: artifact.sha256 for artifact in b
             )
             port = int(ports["8000/tcp"][0]["HostPort"])
             wait_for_health(name, port)
-            verify_browser_assets(port, args.processing_mode)
+            verify_browser_assets(port, args.processing_mode, "closed")
             status, login = post_json(port, "/login", credentials)
             assert status == 200
             headers = {"Authorization": "Bearer " + login["access_token"]}

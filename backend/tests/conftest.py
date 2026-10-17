@@ -57,6 +57,7 @@ def client(
         db_session_factory=test_session_factory,
         jwt_secret_key=jwt_secret_key,
         processing_mode="local",
+        registration_mode="open",
     )
 
     with TestClient(test_app) as test_client:
@@ -81,6 +82,22 @@ def test_session_factory(test_engine):
 @pytest.fixture
 def jwt_secret_key():
     return "test-jwt-secret-key-that-is-at-least-32-bytes"
+
+
+@pytest.fixture(params=["models", "migration"])
+def invitation_sessions(request, tmp_path, monkeypatch):
+    url = URL.create("sqlite", database=str(tmp_path / "invitations.db"))
+    if request.param == "migration":
+        monkeypatch.setenv("ALEMBIC_DATABASE_URL", str(url))
+        command.upgrade(Config("alembic.ini"), "head")
+    engine = create_engine(url)
+    enable_sqlite_foreign_keys(engine)
+    if request.param == "models":
+        Base.metadata.create_all(engine)
+    try:
+        yield sessionmaker(engine)
+    finally:
+        engine.dispose()
 
 
 @pytest.fixture

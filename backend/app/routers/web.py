@@ -27,6 +27,7 @@ def home():
 def ui_info(request: Request):
     return {
         "processing_mode": request.app.state.processing_mode,
+        "registration_mode": request.app.state.registration_mode,
         "max_upload_bytes": request.app.state.max_upload_bytes,
         "max_audio_duration_seconds": request.app.state.max_audio_duration_seconds,
     }

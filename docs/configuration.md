@@ -122,6 +122,47 @@ Reuse the same secret across restarts. Changing it invalidates previously issued
 
 Startup fails if the environment variable is missing or blank.
 
+### Configure Registration
+
+`ISOJAM_REGISTRATION_MODE` accepts `closed` (the default), `open`, or `invite`. It is independent
+of processing mode: closing registration does not disable login or work submitted
+by existing accounts. Invalid values, including blank values, fail startup before
+the model loads.
+
+For local account creation, explicitly open registration before starting the API:
+
+```bash
+export ISOJAM_REGISTRATION_MODE=open
+```
+
+With `closed`, valid `POST /register` requests return `403` with
+`{"detail":"Registration is closed"}` before email lookup, password hashing or
+user creation. Existing and unknown emails receive the same response. Request
+validation and body-size limits still apply, so malformed or oversized requests
+can return `422` or `413` before the endpoint runs.
+
+The mode is read once during application startup. Restart the server to apply a
+change; replace a Docker container with the updated runtime setting. Closing
+registration does not remove users or invalidate their tokens.
+
+With `invite`, `POST /register` requires a valid `invitation_code` belonging to the
+normalized email. Missing, incorrect, expired, used and email-mismatched codes
+return the same `403`, `{"detail":"Invitation is invalid or unavailable"}`. A valid
+code whose email already has an account receives that same response. Codes are
+case-sensitive and must be supplied exactly as issued. `open` requires no code
+and does not consume a supplied invitation; `closed` rejects it regardless.
+
+Claiming the invitation and creating the account commit in one transaction.
+The API rechecks expiry and unused state under SQLite's write lock, after password
+hashing and after any lock wait. A rolled-back transaction leaves both changes
+undone. The browser shows a required invitation field only in `invite` mode,
+omits it in `open` mode and hides account creation in `closed` mode. It reads the
+policy from `/ui-info`; reload after changing the server's mode. Successful
+registration clears the code and signs in automatically. If that login fails,
+retry through sign-in with the created account. See
+[invitation operation and redemption](invitations.md). Email verification and
+account revocation remain later work.
+
 ### Configure Upload Limits
 
 Uploaded files are limited to 200 MiB by default. Set a different positive byte
@@ -168,9 +209,9 @@ For API-only operation on a CPU host:
 export ISOJAM_PROCESSING_MODE=disabled
 ```
 
-Health, registration, login, uploads, job status and existing output downloads
-remain available. New processing jobs return `503` without creating a job record
-or scheduling work. This mode does not perform CPU inference or submit jobs to an
+Health, login, uploads, job status and existing output downloads remain available;
+registration follows its separate policy. New processing jobs return `503` without
+creating a job record or scheduling work. This mode does not perform CPU inference or submit jobs to an
 external worker; worker integration is still required for a complete hosted flow.
 
 To accept durable work without loading a model:
@@ -319,7 +360,9 @@ Register → Log in → Upload WAV → Create job → Poll status → Download s
 
 ### 1. Register and Log In
 
-Create an account with `POST /register`, then authenticate with `POST /login`. Both endpoints accept JSON:
+With registration explicitly open, create an account with `POST /register`, then
+authenticate with `POST /login`. Existing accounts can log in while registration
+is closed. Both endpoints accept JSON:
 
 ```json
 {

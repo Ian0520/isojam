@@ -32,6 +32,7 @@ start the API with its signing secret configured:
 
 ```bash
 export ISOJAM_PROCESSING_MODE=queued
+export ISOJAM_REGISTRATION_MODE=open  # Local demo account creation only.
 uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 

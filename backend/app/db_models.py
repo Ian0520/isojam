@@ -171,3 +171,32 @@ class User(Base):
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     email: Mapped[str] = mapped_column(unique=True)
     password_hash: Mapped[str] = mapped_column()
+
+
+class RegistrationInvitation(Base):
+    __tablename__ = "registration_invitations"
+    __table_args__ = (
+        UniqueConstraint("code_hash", name="uq_registration_invitations_code_hash"),
+        CheckConstraint(
+            "length(email) BETWEEN 3 AND 254 AND email = lower(trim(email))",
+            name="ck_registration_invitations_email",
+        ),
+        CheckConstraint(
+            "length(code_hash) = 64 AND code_hash NOT GLOB '*[^0-9a-f]*'",
+            name="ck_registration_invitations_code_hash",
+        ),
+        CheckConstraint(
+            "expires_at > created_at", name="ck_registration_invitations_expiry"
+        ),
+        CheckConstraint(
+            "used_at IS NULL OR (used_at >= created_at AND used_at < expires_at)",
+            name="ck_registration_invitations_used_at",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    email: Mapped[str]
+    code_hash: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime())
+    expires_at: Mapped[datetime] = mapped_column(UTCDateTime())
+    used_at: Mapped[datetime | None] = mapped_column(UTCDateTime())

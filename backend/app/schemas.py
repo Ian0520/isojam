@@ -1,12 +1,13 @@
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, SecretStr
 
 
 class RegisterRequest(BaseModel):
     email: EmailStr
     password: str = Field(min_length=1)
+    invitation_code: SecretStr | None = None
 
 
 class UserResponse(BaseModel):

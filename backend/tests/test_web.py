@@ -5,14 +5,16 @@ from app.main import create_app
 
 
 @pytest.mark.parametrize("mode", ["local", "queued", "disabled"])
+@pytest.mark.parametrize("registration_mode", ["open", "closed", "invite"])
 def test_browser_assets_and_runtime_info_in_each_mode(
-    mode, fake_model_session, jwt_secret_key, test_session_factory
+    mode, registration_mode, fake_model_session, jwt_secret_key, test_session_factory
 ):
     app = create_app(
         model_session_factory=lambda: fake_model_session,
         db_session_factory=test_session_factory,
         jwt_secret_key=jwt_secret_key,
         processing_mode=mode,
+        registration_mode=registration_mode,
         max_upload_bytes=1024,
         max_audio_duration_seconds=30,
     )
@@ -22,12 +24,16 @@ def test_browser_assets_and_runtime_info_in_each_mode(
         assert page.headers["content-type"].startswith("text/html")
         assert "script-src 'self'" in page.headers["content-security-policy"]
         assert client.get("/static/app.js").status_code == 200
+        auth_script = client.get("/static/auth.js")
+        assert auth_script.status_code == 200
+        assert "javascript" in auth_script.headers["content-type"]
         history_script = client.get("/static/history.js")
         assert history_script.status_code == 200
         assert "javascript" in history_script.headers["content-type"]
         assert client.get("/static/styles.css").status_code == 200
         assert client.get("/ui-info").json() == {
             "processing_mode": mode,
+            "registration_mode": registration_mode,
             "max_upload_bytes": 1024,
             "max_audio_duration_seconds": 30,
         }

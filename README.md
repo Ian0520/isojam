@@ -18,7 +18,7 @@ demo and a separate queued worker with durable execution and publication records
 
 ## What works
 
-- Account registration and login with Argon2 password hashing and JWT access tokens.
+- Account registration with open, closed and invitation-only modes, Argon2 password hashing and JWT login.
 - Authenticated WAV uploads with request, file-size, duration and decoded-audio validation.
 - Ownership checks on uploads, jobs and stem downloads.
 - Owner-scoped job-history API with cursor pagination and original filenames.
@@ -79,6 +79,7 @@ extra, configure a signing secret and apply migrations. Then, from `backend`:
 ```bash
 source .venv/bin/activate
 export ISOJAM_PROCESSING_MODE=local
+export ISOJAM_REGISTRATION_MODE=open
 uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
@@ -87,6 +88,12 @@ short WAV and select **Separate audio**. Return to previous work through **Your
 sessions**; saved job IDs also work through the expandable lookup. API documentation
 is at `/docs`. See the [demo guide](docs/demo.md) for
 prerequisites and the tested workflow.
+
+Registration defaults to `closed`. The demo explicitly opens it for account
+creation; set it back to `closed` and restart to stop new signups while existing
+accounts can still log in. Set `invite` to require an email-bound code through
+the browser's **Create account** form or the API. See the
+[registration policy](docs/configuration.md#configure-registration).
 
 ## Verify without a GPU
 
@@ -123,6 +130,7 @@ are not yet implemented.
 ## Explore the project
 
 - [Configuration and API reference](docs/configuration.md)
+- [Registration invitations](docs/invitations.md)
 - [Docker operation and smoke tests](docs/containers.md)
 - [Continuous integration](docs/ci.md)
 - [Demo recording and measured evidence](docs/demo.md)

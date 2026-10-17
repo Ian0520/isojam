@@ -7,11 +7,13 @@ from fastapi.staticfiles import StaticFiles
 from app.config import (
     ACCESS_TOKEN_EXPIRES_DELTA,
     PROCESSING_MODES,
+    REGISTRATION_MODES,
     get_jwt_secret_key,
     get_max_audio_duration_seconds,
     get_max_unfinished_jobs_per_user,
     get_max_upload_bytes,
     get_processing_mode,
+    get_registration_mode,
 )
 from app.database import SessionLocal
 from app.middleware import RequestSizeLimitMiddleware
@@ -32,6 +34,7 @@ def create_app(
     max_audio_duration_seconds: int | None = None,
     max_unfinished_jobs_per_user: int | None = None,
     processing_mode: str | None = None,
+    registration_mode: str | None = None,
 ):
     if max_upload_bytes is not None and (
         type(max_upload_bytes) is not int or max_upload_bytes <= 0
@@ -50,6 +53,9 @@ def create_app(
 
     if processing_mode is not None and processing_mode not in PROCESSING_MODES:
         raise ValueError("processing_mode must be 'local', 'disabled', or 'queued'")
+
+    if registration_mode is not None and registration_mode not in REGISTRATION_MODES:
+        raise ValueError("registration_mode must be 'open', 'closed', or 'invite'")
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -71,6 +77,11 @@ def create_app(
         )
         app.state.processing_mode = (
             processing_mode if processing_mode is not None else get_processing_mode()
+        )
+        app.state.registration_mode = (
+            registration_mode
+            if registration_mode is not None
+            else get_registration_mode()
         )
         session = (
             model_session_factory() if app.state.processing_mode == "local" else None
