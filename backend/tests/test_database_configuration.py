@@ -88,6 +88,7 @@ class FakeModel:
 app = create_app(
     model_session_factory=FakeModel,
     jwt_secret_key="test-database-secret-at-least-32-bytes",
+    registration_mode="open",
     max_upload_bytes=1024,
     max_audio_duration_seconds=60,
     max_unfinished_jobs_per_user=2,

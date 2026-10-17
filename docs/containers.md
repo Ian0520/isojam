@@ -79,6 +79,7 @@ The template uses paths **inside the container**:
 
 ```text
 ISOJAM_PROCESSING_MODE=disabled
+ISOJAM_REGISTRATION_MODE=closed
 ISOJAM_DATABASE_PATH=/var/lib/isojam/metadata/isojam.db
 ISOJAM_AUDIO_STORAGE_DIR=/var/lib/isojam/audio
 ```
@@ -86,6 +87,12 @@ ISOJAM_AUDIO_STORAGE_DIR=/var/lib/isojam/audio
 Leave `ALEMBIC_DATABASE_URL` unset so migrations and the API select the same
 metadata file. Optional request/upload/job limits use the existing environment
 settings documented in [Configuration](configuration.md).
+
+Registration is closed by default. For this local exercise, set
+`ISOJAM_REGISTRATION_MODE=open` in the runtime settings file when creating an
+account. Set it back to `closed` and replace the container to stop new signups;
+existing accounts can still log in. The smoke script opens its disposable first
+server explicitly and closes registration on replacement, verifying both states.
 
 ## 3. Create persistent storage and migrate
 

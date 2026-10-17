@@ -228,6 +228,7 @@ def run_smoke(root):
         ISOJAM_DATABASE_PATH=str(database),
         ISOJAM_AUDIO_STORAGE_DIR=str(audio),
         ISOJAM_PROCESSING_MODE="queued",
+        ISOJAM_REGISTRATION_MODE="open",
         ISOJAM_JWT_SECRET_KEY=secrets.token_hex(32),
         ISOJAM_MAX_AUDIO_DURATION_SECONDS="600",
         ISOJAM_MAX_UPLOAD_BYTES=str(200 * 1024 * 1024),

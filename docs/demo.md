@@ -23,8 +23,9 @@ queued worker.
 1. Follow [local GPU setup](configuration.md#setup): install the inference extra,
    use a compatible CUDA-enabled PyTorch environment, configure the JWT secret,
    and run `alembic upgrade head` against the selected database.
-2. From `backend`, activate the environment, set `ISOJAM_PROCESSING_MODE=local`,
-   and run `uvicorn app.main:app --host 127.0.0.1 --port 8000`.
+2. From `backend`, activate the environment, set `ISOJAM_PROCESSING_MODE=local`
+   and `ISOJAM_REGISTRATION_MODE=open` for local account creation, then run
+   `uvicorn app.main:app --host 127.0.0.1 --port 8000`.
 3. Open `http://127.0.0.1:8000/`. Create an account or sign in.
 4. Choose a short WAV you have permission to use, then select **Separate audio**.
    Watch pending/processing become completed. The page displays no invented

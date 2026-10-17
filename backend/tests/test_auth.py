@@ -222,6 +222,7 @@ def test_login_uses_jwt_secret_key_from_environment(
     test_app = create_app(
         model_session_factory=fake_factory,
         db_session_factory=test_session_factory,
+        registration_mode="open",
     )
 
     test_app.dependency_overrides[get_db] = override_get_db
@@ -415,6 +416,7 @@ def test_login_uses_injected_token_lifetime(
         db_session_factory=test_session_factory,
         jwt_secret_key=jwt_secret_key,
         access_token_expires_delta=expires_delta,
+        registration_mode="open",
     )
 
     with TestClient(test_app) as client:

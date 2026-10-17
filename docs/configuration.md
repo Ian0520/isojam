@@ -122,6 +122,30 @@ Reuse the same secret across restarts. Changing it invalidates previously issued
 
 Startup fails if the environment variable is missing or blank.
 
+### Configure Registration
+
+`ISOJAM_REGISTRATION_MODE` accepts `closed` (the default) or `open`. It is independent
+of processing mode: closing registration does not disable login or work submitted
+by existing accounts. Invalid values, including blank values, fail startup before
+the model loads.
+
+For local account creation, explicitly open registration before starting the API:
+
+```bash
+export ISOJAM_REGISTRATION_MODE=open
+```
+
+With `closed`, valid `POST /register` requests return `403` with
+`{"detail":"Registration is closed"}` before email lookup, password hashing or
+user creation. Existing and unknown emails receive the same response. Request
+validation and body-size limits still apply, so malformed or oversized requests
+can return `422` or `413` before the endpoint runs.
+
+The mode is read once during application startup. Restart the server to apply a
+change; replace a Docker container with the updated runtime setting. Closing
+registration does not remove users or invalidate their tokens. Invitation codes,
+email verification and account revocation are not implemented in this slice.
+
 ### Configure Upload Limits
 
 Uploaded files are limited to 200 MiB by default. Set a different positive byte
@@ -168,9 +192,9 @@ For API-only operation on a CPU host:
 export ISOJAM_PROCESSING_MODE=disabled
 ```
 
-Health, registration, login, uploads, job status and existing output downloads
-remain available. New processing jobs return `503` without creating a job record
-or scheduling work. This mode does not perform CPU inference or submit jobs to an
+Health, login, uploads, job status and existing output downloads remain available;
+registration follows its separate policy. New processing jobs return `503` without
+creating a job record or scheduling work. This mode does not perform CPU inference or submit jobs to an
 external worker; worker integration is still required for a complete hosted flow.
 
 To accept durable work without loading a model:
@@ -319,7 +343,9 @@ Register → Log in → Upload WAV → Create job → Poll status → Download s
 
 ### 1. Register and Log In
 
-Create an account with `POST /register`, then authenticate with `POST /login`. Both endpoints accept JSON:
+With registration explicitly open, create an account with `POST /register`, then
+authenticate with `POST /login`. Existing accounts can log in while registration
+is closed. Both endpoints accept JSON:
 
 ```json
 {

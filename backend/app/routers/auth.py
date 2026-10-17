@@ -15,15 +15,21 @@ router = APIRouter()
     response_model=UserResponse,
     status_code=201,
 )
-def register_endpoint(request: RegisterRequest, session: Session = Depends(get_db)):
-    normalized_email = str(request.email).strip().lower()
+def register_endpoint(
+    registration: RegisterRequest,
+    request: Request,
+    session: Session = Depends(get_db),
+):
+    if request.app.state.registration_mode != "open":
+        raise HTTPException(status_code=403, detail="Registration is closed")
+    normalized_email = str(registration.email).strip().lower()
     existing_user = users.get_user_by_email(session, normalized_email)
     if existing_user is not None:
         raise HTTPException(
             status_code=409,
             detail="Email is already registered",
         )
-    password_hash = hash_password(request.password)
+    password_hash = hash_password(registration.password)
     try:
         user = users.create_user(
             session,

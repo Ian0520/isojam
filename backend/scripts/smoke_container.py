@@ -159,6 +159,8 @@ import re
 
 assert os.getuid() == 10001
 assert os.environ['ISOJAM_PROCESSING_MODE'] in {'disabled', 'queued'}
+from app.config import get_registration_mode
+assert get_registration_mode() == 'closed'
 assert os.environ['ISOJAM_DATABASE_PATH'] == '/var/lib/isojam/metadata/isojam.db'
 assert os.environ['ISOJAM_AUDIO_STORAGE_DIR'] == '/var/lib/isojam/audio'
 for package in ['torch', 'bs_roformer', 'pytest', 'httpx2', 'ruff']:
@@ -207,6 +209,9 @@ print('Non-root runtime, pinned dependencies, and volume permissions passed')
                 "--name",
                 name,
                 *common,
+                "--env",
+                "ISOJAM_REGISTRATION_MODE="
+                + ("open" if phase == "first-start" else "closed"),
                 "--publish",
                 "127.0.0.1::8000",
                 args.image,
@@ -225,6 +230,18 @@ print('Non-root runtime, pinned dependencies, and volume permissions passed')
             if phase == "first-start":
                 status, _ = post_json(port, "/register", credentials)
                 assert status == 201, f"Registration returned {status}"
+            else:
+                for email in (credentials["email"], "not-invited@example.com"):
+                    status, body = post_json(
+                        port, "/register", {**credentials, "email": email}
+                    )
+                    assert status == 403 and body == {
+                        "detail": "Registration is closed"
+                    }
+                print(
+                    "Replacement closed registration for existing and new emails",
+                    flush=True,
+                )
             status, login = post_json(port, "/login", credentials)
             assert status == 200, f"Login returned {status}"
             headers = {"Authorization": "Bearer " + login["access_token"]}

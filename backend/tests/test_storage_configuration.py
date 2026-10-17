@@ -49,6 +49,7 @@ app = create_app(
     model_session_factory=FakeModel,
     db_session_factory=session_factory,
     jwt_secret_key="test-secret-key-at-least-32-bytes-long",
+    registration_mode="open",
     max_upload_bytes=1024 * 1024,
     max_audio_duration_seconds=60,
     max_unfinished_jobs_per_user=2,

@@ -57,6 +57,7 @@ def client(
         db_session_factory=test_session_factory,
         jwt_secret_key=jwt_secret_key,
         processing_mode="local",
+        registration_mode="open",
     )
 
     with TestClient(test_app) as test_client:

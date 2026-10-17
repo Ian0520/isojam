@@ -59,6 +59,7 @@ changing an image alone does not undo data migrations.
 | Real model worker fails | Inspect `worker-logs/<invocation>-<launch>.log` inside audio storage. Check CUDA, cached model assets and inference dependencies. A confirmed nonzero exit without a manifest becomes failed; no automatic inference retry occurs. |
 | Upload returns 413 / 422 | Check byte/duration limits or readable mono/stereo WAV content. Renaming a file is insufficient; the server decodes and validates it. |
 | Browser sign-in expires | Log in again and select the job from Your sessions, or use the saved-ID lookup. Access tokens expire after 30 minutes; there is no refresh-token flow. |
+| Account creation returns 403 | Registration defaults to `closed`. For local account creation, explicitly set `ISOJAM_REGISTRATION_MODE=open` and restart or replace the API. Existing accounts can still log in while registration is closed. |
 | Job submission returns 429 | The user has reached the configured unfinished-job allowance. Inspect existing jobs before creating more work. |
 | Another account receives 404 | Ownership checks intentionally hide the resource. Use the owning account; do not weaken the check. |
 | Pending queued job never starts | A cycle may not have run, or the single global attempt slot is occupied. Inspect the dispatcher JSON result. |

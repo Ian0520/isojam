@@ -91,6 +91,7 @@ def test_app_uses_injected_db_session_factory_for_requests(
         model_session_factory=fake_factory,
         db_session_factory=test_session_factory,
         jwt_secret_key=jwt_secret_key,
+        registration_mode="open",
     )
     email = "injected-db@example.com"
 

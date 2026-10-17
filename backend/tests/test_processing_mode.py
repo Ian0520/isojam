@@ -160,7 +160,7 @@ from app.model_worker import run_model_worker
 from app.model_execution import LocalModelWorkerAdapter
 
 Base.metadata.create_all(engine)
-app = create_app(jwt_secret_key='test-secret-at-least-32-bytes-long', max_upload_bytes=1024, max_audio_duration_seconds=60, max_unfinished_jobs_per_user=2)
+app = create_app(jwt_secret_key='test-secret-at-least-32-bytes-long', registration_mode='open', max_upload_bytes=1024, max_audio_duration_seconds=60, max_unfinished_jobs_per_user=2)
 with TestClient(app) as client:
     assert client.get('/health').status_code == 200
     credentials = {'email': 'cpu@example.com', 'password': 'correct-horse-battery-staple'}
