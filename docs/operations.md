@@ -1,7 +1,8 @@
 # Operations and troubleshooting
 
 These notes cover the current single-host CPU API container and local GPU demo.
-For a complete container walkthrough, use [containers.md](containers.md). Do not
+For manual CPU container operation, use [containers.md](containers.md). For the
+API/GPU Compose stack, use [local-stack.md](local-stack.md). Do not
 apply destructive experiments to a volume holding data you want to keep.
 
 ## Check the running CPU API

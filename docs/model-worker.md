@@ -340,8 +340,12 @@ removed. These checks do not package the GPU worker into the CPU image.
 
 ## Remaining release work
 
+The [local GPU stack](local-stack.md) packages this worker in a separate image
+and runs it beside the CPU API with Compose. The dispatcher and child workers
+remain in the same processor container for process-group supervision.
+
 Establish the accepted-rate/resampling policy before claiming broad input-rate
-quality. Hosted deployment, a GPU container runtime, disk/log retention and
+quality. Hosted deployment, disk/log retention and
 operator handling of unknown execution remain separate work. Continuous polling
 does not turn unknown termination into a safe inference retry.
 

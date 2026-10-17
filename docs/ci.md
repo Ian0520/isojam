@@ -39,6 +39,12 @@ registration and preserves login and existing uploads/jobs. The invitation hash,
 seven-day expiry and use timestamp survive all replacements. The runtime default
 is also checked as closed. The raw code is kept out of smoke output.
 
+A separate Compose smoke runs the API and processor in different containers with
+an explicit CPU fake-worker override. It checks migration ordering, API admission,
+graceful shutdown, original-attempt persistence and exact downloads after both
+containers are recreated. Each run owns and removes its own Compose project and
+volumes. The real GPU version is described in [local stack](local-stack.md).
+
 ## Run the same checks locally
 
 From the repository root with Docker running:
@@ -53,6 +59,7 @@ docker build --platform linux/amd64 -t isojam-api:ci backend
 python3 backend/scripts/check_container.py --image isojam-api:ci
 python3 backend/scripts/smoke_container.py --image isojam-api:ci
 python3 backend/scripts/smoke_container.py --image isojam-api:ci --processing-mode queued --dispatch-fake-worker --recover-publication
+python3 backend/scripts/smoke_compose.py --api-image isojam-api:ci
 ```
 
 A failed check exits nonzero and fails the GitHub job. Inspect the first failing

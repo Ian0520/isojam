@@ -1,8 +1,11 @@
-# Only send files needed to build the API image.
+# Only send files needed to build the API and GPU processor images.
 *
 !Dockerfile
+!Dockerfile.gpu
 !.dockerignore
 !requirements-api.txt
+!requirements-gpu.txt
+!requirements-gpu-build.txt
 !pyproject.toml
 !app/
 !app/**

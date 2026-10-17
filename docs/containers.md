@@ -8,8 +8,10 @@ without loading a model. A one-cycle local dispatcher/fake-worker now exercises
 permission/contact, durable fake WAV bundles and atomic database publication.
 It can also recover missing publication from confirmed stop proof and a valid
 saved bundle. A real queued runner is available separately in the same-host CUDA
-environment; see [Real model worker](model-worker.md). This CPU image still cannot
-run inference. Remote control/storage and a packaged GPU runtime remain later work.
+environment or the separate [GPU processor image](local-stack.md); see also
+[Real model worker](model-worker.md). This CPU image still cannot run inference.
+Use the [local Compose guide](local-stack.md) for coordinated API/processor startup
+and shutdown. Remote control and storage remain later work.
 The image includes the browser studio at `/`; it labels queued processing as
 queued processing and disabled mode as playback only.
 
