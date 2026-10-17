@@ -197,6 +197,7 @@ class LocalFakeWorkerAdapter:
                     stdout=output,
                     stderr=subprocess.DEVNULL,
                     env=worker_env,
+                    start_new_session=True,
                 ) as result:
                     try:
                         result.communicate(input=payload, timeout=self.timeout_seconds)

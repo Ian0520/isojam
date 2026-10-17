@@ -20,6 +20,8 @@ class CpuModel:
             raise RuntimeError("synthetic model failure")
         if self.mode == "stall":
             time.sleep(60)
+        if self.mode == "slow-success":
+            time.sleep(1)
         input_path = next(input_folder.iterdir())
         audio, rate = sf.read(input_path)
         outputs = []
@@ -38,3 +40,28 @@ def child_main(mode):
     from app.model_worker import main
 
     return main(model_session_factory=lambda: CpuModel(mode))
+
+
+def service_main():
+    """Run the real service with slow CPU worker children for signal tests."""
+    import subprocess
+    import sys
+
+    import app.model_execution as execution
+    from app.dispatcher import main
+
+    original = subprocess.Popen
+
+    def launch(command, **kwargs):
+        assert command == [sys.executable, "-m", "app.model_worker"]
+        return original(
+            [
+                sys.executable,
+                "-c",
+                "from tests.model_worker_helpers import child_main; raise SystemExit(child_main('slow-success'))",
+            ],
+            **kwargs,
+        )
+
+    execution.subprocess.Popen = launch
+    return main()

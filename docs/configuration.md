@@ -193,8 +193,10 @@ See [Real model worker](model-worker.md) for setup and failure behavior.
 Pending/processing jobs count
 toward the allowance and cannot serve outputs (409); completed jobs expose owned
 downloads. Publication recovery for confirmed stopped workers is implemented;
-uncertain executions remain occupied. Remote storage/control, a supervised polling
-loop and hosted deployment remain separate work.
+uncertain executions remain occupied. Use `--serve --adapter local-model` for
+continuous same-host processing; see the worker guide for graceful shutdown and
+the supervisor example. Remote storage/control and hosted deployment remain
+separate work.
 
 ### Local dispatcher coordination exercise
 
@@ -273,8 +275,10 @@ Reconciliation can now finalize a confirmed nonzero exit with no manifest as
 `failed`, releasing capacity without repeating inference. Existing invalid
 manifests and unreadable storage retain their occupied state. This rule also
 applies to the fake transport on a later recovery cycle.
-There is no automatic inference retry, timeout-based release, expired-reservation
-scanner or polling loop. Recovery uses a stored authority snapshot and rechecks it
+There is no automatic inference retry or timeout-based release of uncertain work.
+Continuous polling is available with `--serve`. An expired owned reservation can
+be reclaimed only before submission intent, preserving its attempt and increasing
+its generation. Recovery uses a stored authority snapshot and rechecks it
 after verification; it never transfers execution ownership. CLI defaults are
 60 seconds for pre-submission ownership, 300 for receiving execution permission, 30 for the local
 fake-child wait, and 1000 milliseconds for each SQLite lock wait. The child timeout
@@ -379,7 +383,7 @@ behavior: each successful submission creates a new job.
 
 Receipts are persisted without automatic expiry. Job and receipt commit together;
 replaying an accepted submission does not recover interrupted background work.
-The queued fake runner can recover publication from a confirmed stopped worker
+The queued runner can recover publication from a confirmed stopped worker
 and verified saved bundle. It does not resume local background inference. Downgrading the receipt migration
 keeps jobs/results but removes stored keys and therefore their replay protection.
 

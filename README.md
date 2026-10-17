@@ -36,13 +36,24 @@ demo and a separate queued worker with durable execution and publication records
 | Path | Purpose | Execution and recovery |
 | --- | --- | --- |
 | `local` | Real source separation in the browser | Loads the GPU model once; runs FastAPI background tasks. Interrupted inference is not resumed after restart. |
-| `queued` | Separate worker execution | A Linux dispatcher runs the real model with `local-model`, or test WAVs with the explicit `local-fake` adapter. Saved results can be published after confirmed exit without repeating inference. |
+| `queued` | Separate worker execution | A continuous Linux dispatcher runs the real model with `local-model`, or test WAVs with explicit `local-fake`. Saved results can be published after confirmed exit without repeating inference. |
 | `disabled` | CPU API and existing-result access | Authentication, uploads, status and downloads work; new jobs return 503. |
 
 The CPU Docker image defaults to `disabled` and does **not** contain the model.
 Real queued inference runs in the existing CUDA environment on the SQLite host;
 see [Real model worker](docs/model-worker.md). An unknown worker exit keeps its
 queue slot occupied; an old heartbeat alone is not enough to authorize replacement.
+
+With matching database/audio settings and the API in queued mode, start its worker
+from the activated inference environment:
+
+```bash
+python -m app.dispatcher --serve --adapter local-model
+```
+
+Use `--once` for a single cycle. SIGTERM or Ctrl+C stops the continuous dispatcher
+after its active cycle finishes. An example supervised service and the disposable
+real GPU restart/interruption smoke are documented in the worker guide.
 
 ```mermaid
 flowchart LR
@@ -103,7 +114,7 @@ tokens, which expire after 30 minutes; refresh tokens are not implemented.
 Preview fetches a whole authenticated WAV before playing it.
 
 Local inference has no global GPU scheduling limit or restart recovery. The
-queued path uses one global slot and requires explicit dispatcher cycles. Known
+queued path uses one global slot with continuous polling or explicit cycles. Known
 nonzero exits without a manifest can be finalized as failed; uncertain execution
 and damaged saved manifests require inspection. AWS hosting, remote GPU execution, MySQL and Redis
 integration remain future work. Custom backing-track mixing and speed adjustment

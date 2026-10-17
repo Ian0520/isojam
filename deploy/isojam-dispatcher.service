@@ -1,0 +1,20 @@
+[Unit]
+Description=IsoJam queued model dispatcher
+After=local-fs.target
+
+[Service]
+Type=simple
+User=isojam
+Group=isojam
+WorkingDirectory=/opt/isojam/backend
+EnvironmentFile=/etc/isojam/isojam.env
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/isojam/backend/.venv/bin/python -m app.dispatcher --serve --adapter local-model
+Restart=on-failure
+RestartSec=5
+KillMode=mixed
+TimeoutStopSec=35min
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

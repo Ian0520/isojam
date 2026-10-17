@@ -62,6 +62,9 @@ changing an image alone does not undo data migrations.
 | Job submission returns 429 | The user has reached the configured unfinished-job allowance. Inspect existing jobs before creating more work. |
 | Another account receives 404 | Ownership checks intentionally hide the resource. Use the owning account; do not weaken the check. |
 | Pending queued job never starts | A cycle may not have run, or the single global attempt slot is occupied. Inspect the dispatcher JSON result. |
+| Dispatcher stops when its terminal closes | Run `--serve` under a supervisor; see the example unit in the worker guide. Restarting the API does not start the dispatcher. |
+| Dispatcher is stopping during inference | SIGTERM/SIGINT drains the active cycle. Its default worker timeout is 30 minutes; the supervisor must allow time for that plus cleanup/publication. |
+| An old reservation blocks the queue after controller restart | Polling can reclaim an expired owned `reserved` attempt with a new generation. `submitting` and later states remain held until there is reliable execution evidence. |
 | Stopped fake worker has saved outputs but job is still processing | Run `python -m app.dispatcher --once --adapter local-fake --reconcile-only` with matching storage/database settings. Valid saved stop proof and the entire verified bundle are required. |
 | Dispatcher reports `database_busy` | Another SQLite writer held the bounded lock wait. Diagnose the writer and retry the cycle; this is not permission to launch another worker. |
 | Exit is unknown or bundle is invalid | Keep the attempt occupied and inspect evidence. Heartbeat age, timeout, file presence or a duplicate child's exit cannot safely authorize replacement. |

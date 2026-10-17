@@ -23,9 +23,15 @@ from app.separation import separate_audio
 MODEL_STEMS = ("vocals", "drums", "bass", "guitar", "piano", "other", "instrumental")
 
 
-def get_model_result_profile() -> ResultProfile:
+def get_model_result_profile(
+    *, max_duration_seconds: int | None = None
+) -> ResultProfile:
     """Bind the pinned model/output contract and configured duration to a policy."""
-    duration = get_max_audio_duration_seconds()
+    duration = (
+        get_max_audio_duration_seconds()
+        if max_duration_seconds is None
+        else max_duration_seconds
+    )
     # The wrapper preserves the input rate/channels and writes float32 WAVs.
     # Allow the largest accepted input layout plus bounded WAV header overhead.
     max_stem_bytes = duration * 96000 * 2 * 4 + 64 * 1024

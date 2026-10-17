@@ -8,7 +8,8 @@ The queued path supports explicit `local-model` execution on the SQLite host.
 `LocalModelWorkerAdapter` launches and waits for that worker. The dispatcher then
 publishes the verified bundle or finalizes a confirmed unsuccessful execution.
 `local-fake` remains available for CPU-only exercises. Local API background
-processing keeps its existing behavior. There is no continuous service loop yet.
+processing keeps its existing behavior. `--serve` polls continuously; `--once`
+performs one explicit cycle.
 
 For the initial same-host release, retain the SQLite queue and start with one
 active inference subprocess. This reuses the existing reservation, execution and
@@ -40,8 +41,14 @@ Submit a WAV through the browser, then in the other activated inference shell:
 python -m app.dispatcher --once --adapter local-model
 ```
 
-One cycle handles one saved recovery or one new delivery. Run another cycle for
-the next job. Keep `local-fake` on disposable exercise data, rather than selecting
+One cycle handles one saved recovery or one new delivery. To discover later jobs
+automatically, run the continuous form instead:
+
+```bash
+python -m app.dispatcher --serve --adapter local-model
+```
+
+Keep `local-fake` on disposable exercise data, rather than selecting
 it for personal recordings. The chosen adapter supplies the trusted verification
 profile; do not switch adapters/profiles while attempts remain unfinished.
 
@@ -59,6 +66,42 @@ python -m app.dispatcher --once --adapter local-model --reconcile-only
 
 This recovery command needs the ordinary CPU API dependencies and matching
 configuration/storage, not a loaded model. It does not import Torch.
+
+## Continuous operation and shutdown
+
+The loop uses one dispatcher UUID for its process lifetime and calls the same
+bounded `dispatch_once` operation. Completed, recovered and failed jobs permit
+the next cycle immediately. Idle or unresolved cycles and SQLite contention wait
+two seconds by default; `--poll-interval-seconds` accepts 0.1-60 seconds. No
+database connection is held while waiting. Repeated identical reports are
+suppressed, and each changed result is flushed as one JSON line. Unexpected
+errors include a stderr traceback and exit nonzero for the supervisor to inspect.
+
+SIGTERM/SIGINT set a stop flag. The active cycle finishes and publishes or records
+its outcome, then the loop prints `stopped` and exits zero without taking another
+job. An idle stop waits at most the polling interval. Both local adapters put
+their child in a separate Linux session, so terminal Ctrl+C reaches the
+controller's handler without also interrupting its active worker.
+
+[isojam-dispatcher.service](../deploy/isojam-dispatcher.service) is a systemd example,
+not an installed service. Configure its account, paths and environment for the
+chosen host before enabling it. The example expects the inference environment at
+`/opt/isojam/backend/.venv`, configuration in `/etc/isojam/isojam.env`, cached
+weights accessible to the `isojam` account, and matching storage permissions for
+the API and worker. It restarts unexpected exits after five seconds. `KillMode=mixed`
+initially signals only the controller, while the 35-minute stop allowance covers
+the default 30-minute worker limit plus cleanup/publication. Increase that
+allowance if increasing the worker limit. Forceful termination can still leave
+an invocation without durable exit proof; a restart does not invent it.
+
+Before taking a new job, reservation can also recover the sole occupied attempt
+when it is still `reserved`, owned, expired and attached to a pending job. This
+uses the existing takeover transition under the same write lock: keep the attempt
+ID/number, increase its generation and invalidate the previous token. No
+inference had been submitted. Multiple occupied attempts, unknown owners and
+attempts at `submitting` or later never qualify. This is pre-submission recovery,
+not an inference retry. A stale controller cannot subsequently begin submission
+with its old token.
 
 ## Worker lifetime and diagnostics
 
@@ -224,8 +267,8 @@ This exercised actual descriptor-level log separation: model diagnostics appeare
 in the invocation log and the dispatcher stdout remained a single JSON reply.
 Both the database and audio were removed after the check; no existing user data
 was used. The measurement is one short same-host smoke, not a throughput or
-long-song benchmark. API restart and interrupted real inference remain the next
-end-to-end checks.
+long-song benchmark. The real service checks below additionally cover API restart
+and interrupted real inference.
 
 CPU model substitutes also exercise actual child processes without importing
 Torch, including failure before results, failure during cleanup after saved
@@ -246,12 +289,60 @@ preserved keyed submission replay. Disposable labeled containers/volumes were
 cleaned up by the scripts. This validates the CPU API image; it does not package
 the GPU environment into that image.
 
-## Next slices
+## Real service verification on 2026-10-17
 
-Add the supervised service loop and test real completion, API restart and worker
-interruption end to end. Establish the accepted-rate/resampling policy before
-claiming broad input-rate quality. Hosted deployment, a GPU container runtime,
-disk/log retention and operator handling of unknown execution remain separate work.
+From the activated CUDA environment in `backend`, run:
+
+```bash
+python scripts/smoke_model_worker.py
+```
+
+The script checks cached assets without downloading, applies migrations to a
+fresh temporary database, starts a loopback API and continuous dispatcher, and
+uses original synthetic stereo 44.1 kHz WAVs. It restarts the API during a
+20-second recording's actual inference, preserving the same attempt, invocation
+and worker PID. All seven downloaded files match the verified bundle hashes;
+the original upload bytes, owning token, cross-account denial and keyed submission
+replay survive API replacement.
+
+It then kills only its own worker during another 20-second recording's inference.
+The controller records signal exit -9, atomically marks the job/attempt failed
+and does not retry it. The same live dispatcher completes a later four-second
+recording. There are exactly three jobs and three attempts, two completed jobs
+with fourteen output rows, and one failed job. The dispatcher finally handles
+SIGTERM and exits zero. Three runs of this real scenario passed; the final run
+also verified process-descriptor-based signalling of the disposable worker.
+
+All services, database/audio data and worker scratch space are scoped to the
+smoke's temporary directory and cleaned up. This test signals a worker through a
+Linux process descriptor only after checking its `/proc` environment points to
+that disposable database, avoiding a signal to a reused numeric PID. It never
+uses an existing recording or application database. Worker crashes outside this
+isolated smoke can leave ordinary temporary workspaces for host housekeeping.
+
+CPU tests cover polling/backoff, duplicate-report suppression, later job discovery,
+SIGTERM/SIGINT draining with a real child, exclusion of the next job, competing
+expired reservation takeover, generation fencing and refusal to take over
+submission/ambiguous state. The systemd example passed `systemd-analyze verify`
+using a temporary copy with workspace-specific account/path substitutions; it was
+not installed or enabled.
+
+The complete backend suite passed all 1,205 tests locally in 366.50 seconds and
+again in the rebuilt CPU image with locked dependencies as UID/GID 10001 in
+459.90 seconds. The container run reported fifteen existing SQLAlchemy
+`Result.tuples()` deprecation warnings in job-history tests. Ruff lint/format
+checks passed across all 99 maintained Python files. Both container smokes also
+passed again: disabled-mode data survived replacement, and queued fake execution
+recovered interrupted publication with owned, hash-matched downloads and keyed
+submission replay. All smoke-owned containers, volumes and temporary data were
+removed. These checks do not package the GPU worker into the CPU image.
+
+## Remaining release work
+
+Establish the accepted-rate/resampling policy before claiming broad input-rate
+quality. Hosted deployment, a GPU container runtime, disk/log retention and
+operator handling of unknown execution remain separate work. Continuous polling
+does not turn unknown termination into a safe inference retry.
 
 General lesson: a model returning successfully is only one step in a job's
 lifecycle. Validate its artifacts, persist the evidence, confirm execution ended
