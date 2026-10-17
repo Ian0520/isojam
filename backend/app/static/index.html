@@ -74,10 +74,18 @@
                     aria-pressed="true"
                   >
                     Sign in</button
-                  ><button id="register-tab" type="button" aria-pressed="false">
+                  ><button
+                    id="register-tab"
+                    type="button"
+                    aria-pressed="false"
+                    hidden
+                  >
                     Create account
                   </button>
                 </div>
+                <p id="registration-note" class="muted" aria-live="polite">
+                  Sign in below. Checking whether new accounts are available…
+                </p>
                 <form id="auth-form">
                   <label for="email">Email</label
                   ><input
@@ -94,7 +102,25 @@
                     type="password"
                     autocomplete="current-password"
                     required
-                  /><button
+                  />
+                  <div id="invitation-field" hidden>
+                    <label for="invitation-code">Invitation code</label>
+                    <input
+                      id="invitation-code"
+                      name="invitation_code"
+                      type="password"
+                      autocomplete="off"
+                      autocapitalize="none"
+                      spellcheck="false"
+                      aria-describedby="invitation-help"
+                      disabled
+                    />
+                    <p id="invitation-help" class="muted">
+                      Paste the exact code shared with you and use the email it
+                      was issued for. The code is used once to create your account.
+                    </p>
+                  </div>
+                  <button
                     id="auth-submit"
                     class="button primary full-width"
                     type="submit"

@@ -155,8 +155,13 @@ and does not consume a supplied invitation; `closed` rejects it regardless.
 Claiming the invitation and creating the account commit in one transaction.
 The API rechecks expiry and unused state under SQLite's write lock, after password
 hashing and after any lock wait. A rolled-back transaction leaves both changes
-undone. See [invitation operation and redemption](invitations.md). The browser
-invitation field, email verification and account revocation remain later work.
+undone. The browser shows a required invitation field only in `invite` mode,
+omits it in `open` mode and hides account creation in `closed` mode. It reads the
+policy from `/ui-info`; reload after changing the server's mode. Successful
+registration clears the code and signs in automatically. If that login fails,
+retry through sign-in with the created account. See
+[invitation operation and redemption](invitations.md). Email verification and
+account revocation remain later work.
 
 ### Configure Upload Limits
 

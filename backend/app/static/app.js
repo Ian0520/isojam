@@ -1,3 +1,4 @@
+import { authenticate } from "./auth.js";
 import { JobHistory } from "./history.js";
 
 const $ = (id) => document.getElementById(id);
@@ -124,15 +125,39 @@ function clearSession() {
   $("resume-id").value = "";
   $("job-id-lookup").open = false;
   $("password").value = "";
+  $("invitation-code").value = "";
+  state.authMode = "login";
   updateControls();
 }
 function updateControls() {
   const signedIn = Boolean(state.token);
+  const canRegister = ["open", "invite"].includes(state.info?.registration_mode);
+  const registering = state.authMode === "register";
+  const needsInvitation = registering && state.info?.registration_mode === "invite";
   const active =
     state.job && ["pending", "processing"].includes(state.job.status);
   $("signed-in").hidden = !signedIn;
   $("signed-out").hidden = signedIn;
   $("account-email").textContent = state.email || "";
+  $("login-tab").disabled = state.authBusy;
+  $("register-tab").hidden = !canRegister;
+  $("register-tab").disabled = state.authBusy || !canRegister;
+  $("login-tab").classList.toggle("selected", !registering);
+  $("register-tab").classList.toggle("selected", registering);
+  $("login-tab").setAttribute("aria-pressed", String(!registering));
+  $("register-tab").setAttribute("aria-pressed", String(registering));
+  $("password").autocomplete = registering ? "new-password" : "current-password";
+  $("password").minLength = registering ? 8 : 1;
+  $("registration-note").textContent =
+    {
+      open: "Create an account or sign in to your existing account.",
+      invite: "Have an invitation? Create an account with the email and code shared with you.",
+      closed: "New account registration is closed. Existing accounts can still sign in.",
+    }[state.info?.registration_mode] ||
+    "Sign in below. Account creation is unavailable until the server settings load.";
+  $("invitation-field").hidden = !needsInvitation;
+  $("invitation-code").required = needsInvitation;
+  $("invitation-code").disabled = !needsInvitation || state.authBusy;
   $("auth-submit").disabled = state.authBusy;
   $("auth-submit").textContent = state.authBusy
     ? "Please wait…"
@@ -265,15 +290,14 @@ async function jsonRequest(path, { method = "GET", body, auth = true } = {}) {
   return data;
 }
 function setAuthMode(mode) {
-  if (state.authBusy) return;
+  if (
+    state.authBusy ||
+    (mode === "register" &&
+      !["open", "invite"].includes(state.info?.registration_mode))
+  )
+    return;
   state.authMode = mode;
-  $("login-tab").classList.toggle("selected", mode === "login");
-  $("register-tab").classList.toggle("selected", mode === "register");
-  $("login-tab").setAttribute("aria-pressed", String(mode === "login"));
-  $("register-tab").setAttribute("aria-pressed", String(mode === "register"));
-  $("password").autocomplete =
-    mode === "login" ? "current-password" : "new-password";
-  $("password").minLength = mode === "register" ? 8 : 1;
+  if (mode === "login") $("invitation-code").value = "";
   updateControls();
 }
 $("login-tab").addEventListener("click", () => setAuthMode("login"));
@@ -281,6 +305,12 @@ $("register-tab").addEventListener("click", () => setAuthMode("register"));
 $("auth-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   if (state.authBusy) return;
+  const registering = state.authMode === "register";
+  if (
+    registering &&
+    !["open", "invite"].includes(state.info?.registration_mode)
+  )
+    return;
   const epoch = state.epoch;
   state.authBusy = true;
   updateControls();
@@ -290,17 +320,25 @@ $("auth-form").addEventListener("submit", async (event) => {
     password: $("password").value,
   };
   try {
-    if (state.authMode === "register")
-      await jsonRequest("/register", {
-        method: "POST",
-        body: credentials,
-        auth: false,
-      });
-    const result = await jsonRequest("/login", {
-      method: "POST",
-      body: credentials,
-      auth: false,
-    });
+    const result = await authenticate(
+      jsonRequest,
+      {
+        ...credentials,
+        invitationCode:
+          registering && state.info.registration_mode === "invite"
+            ? $("invitation-code").value
+            : undefined,
+      },
+      {
+        register: registering,
+        onRegistered() {
+          if (epoch !== state.epoch) return;
+          $("invitation-code").value = "";
+          state.authMode = "login";
+          updateControls();
+        },
+      },
+    );
     if (epoch !== state.epoch) return;
     state.token = result.access_token;
     state.email = credentials.email.toLowerCase();
@@ -657,6 +695,7 @@ async function initialize() {
   }
 }
 window.addEventListener("pagehide", () => {
+  $("invitation-code").value = "";
   clearTimeout(state.timer);
   clearPreview();
   for (const url of state.downloadUrls) URL.revokeObjectURL(url);

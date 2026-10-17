@@ -2,8 +2,8 @@
 
 The owner can create email-bound invitations through a database command.
 Issuance does not create an account or change registration mode. The API can
-redeem invitations in `invite` mode; the browser invitation field is the next
-slice. Registration still defaults to `closed`.
+redeem invitations in `invite` mode through the browser or API. Registration
+still defaults to `closed`.
 
 ## Run the owner command
 
@@ -77,6 +77,25 @@ Each command creates an independent invitation. Multiple invitations for one
 email are allowed; issuing a new code does not invalidate earlier ones. If a
 code is lost, another can be issued, while older codes retain their own expiry.
 Revocation and automatic removal of expired records are not implemented yet.
+
+## Redeem in the browser
+
+Start the API with `ISOJAM_REGISTRATION_MODE=invite`. On the studio page, select
+**Create account**, enter the invited email, choose a password and paste the code
+into **Invitation code**. Codes are case-sensitive and must be pasted exactly.
+The field appears only during invitation-only registration and is required there.
+Open registration needs no code; closed registration hides account creation while
+keeping sign-in available. The page reads this policy from `/ui-info`; reload
+after the server's registration policy changes. The API enforces the policy on
+every registration request, regardless of the browser controls.
+
+The browser sends the code only to `/register`, keeps it out of application browser
+storage, and clears the field after account creation, on returning to sign-in,
+on sign-out and when leaving the page. Invalid registration preserves the field
+for correction and shows the API's generic error. Successful registration normally
+signs in automatically. If that login fails, the page confirms account creation
+and switches to sign-in, so retrying does not attempt to consume the code again.
+If the registration response itself is lost, try signing in before registering again.
 
 ## Redeem through the API
 

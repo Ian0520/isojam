@@ -75,10 +75,11 @@ def wait_for_health(name, port):
     raise RuntimeError("API container did not become ready within 30 seconds")
 
 
-def verify_browser_assets(port, processing_mode):
+def verify_browser_assets(port, processing_mode, registration_mode):
     for path, mime in (
         ("/", "text/html"),
         ("/static/app.js", "javascript"),
+        ("/static/auth.js", "javascript"),
         ("/static/history.js", "javascript"),
         ("/static/styles.css", "text/css"),
     ):
@@ -89,7 +90,11 @@ def verify_browser_assets(port, processing_mode):
             if not body:
                 raise RuntimeError(f"Browser asset {path} is empty")
     status, info = request(port, "GET", "/ui-info")
-    if status != 200 or info.get("processing_mode") != processing_mode:
+    if (
+        status != 200
+        or info.get("processing_mode") != processing_mode
+        or info.get("registration_mode") != registration_mode
+    ):
         raise RuntimeError("Browser runtime information disagrees with API mode")
 
 
@@ -219,6 +224,7 @@ print('Non-root runtime, pinned dependencies, and volume permissions passed')
         upload_id = None
         job_id = None
         for phase in ("first-start", "replacement", "registration-closed"):
+            registration_mode = "closed" if phase == "registration-closed" else "invite"
             docker(
                 "run",
                 "--detach",
@@ -226,8 +232,7 @@ print('Non-root runtime, pinned dependencies, and volume permissions passed')
                 name,
                 *common,
                 "--env",
-                "ISOJAM_REGISTRATION_MODE="
-                + ("closed" if phase == "registration-closed" else "invite"),
+                "ISOJAM_REGISTRATION_MODE=" + registration_mode,
                 "--publish",
                 "127.0.0.1::8000",
                 args.image,
@@ -242,7 +247,7 @@ print('Non-root runtime, pinned dependencies, and volume permissions passed')
             assert binding["HostIp"] == "127.0.0.1"
             port = int(binding["HostPort"])
             wait_for_health(name, port)
-            verify_browser_assets(port, args.processing_mode)
+            verify_browser_assets(port, args.processing_mode, registration_mode)
             if phase == "first-start":
                 for invalid in (
                     credentials,
@@ -557,7 +562,7 @@ print(__import__('json').dumps({artifact.stem: artifact.sha256 for artifact in b
             )
             port = int(ports["8000/tcp"][0]["HostPort"])
             wait_for_health(name, port)
-            verify_browser_assets(port, args.processing_mode)
+            verify_browser_assets(port, args.processing_mode, "closed")
             status, login = post_json(port, "/login", credentials)
             assert status == 200
             headers = {"Authorization": "Bearer " + login["access_token"]}
