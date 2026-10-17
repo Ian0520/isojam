@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import sys
+from importlib.resources import files
 from pathlib import Path
 
 READY_FILE = Path("/tmp/isojam-processor-ready.json")
@@ -27,7 +28,16 @@ def verify_models() -> str:
     directory = models_directory() / entry.slug
     for kind, name in (("checkpoint", entry.checkpoint), ("config", entry.config)):
         path = directory / name
-        metadata = artifact_metadata(entry.slug, kind)
+        if kind == "config":
+            # The pinned downloader prefers this bundled YAML over the remote
+            # config, whose download metadata describes different bytes.
+            expected = files("bs_roformer").joinpath("configs", name).read_bytes()
+            metadata = {
+                "size": len(expected),
+                "sha256": hashlib.sha256(expected).hexdigest(),
+            }
+        else:
+            metadata = artifact_metadata(entry.slug, kind)
         if not path.is_file():
             raise RuntimeError(
                 f"Missing model artifact: {path}. Run the prepare-models command first."

@@ -19,6 +19,10 @@ def models(tmp_path, monkeypatch):
     artifacts = {"checkpoint": b"model-weights", "config": b"model: test\n"}
     for kind, data in artifacts.items():
         (folder / getattr(entry, kind)).write_bytes(data)
+    package = tmp_path / "package"
+    (package / "configs").mkdir(parents=True)
+    (package / "configs" / entry.config).write_bytes(artifacts["config"])
+    monkeypatch.setattr(processor, "files", lambda _: package)
     metadata = {
         kind: {"size": len(data), "sha256": hashlib.sha256(data).hexdigest()}
         for kind, data in artifacts.items()
@@ -42,6 +46,21 @@ def models(tmp_path, monkeypatch):
 
 
 def test_model_check_verifies_both_pinned_artifacts_without_downloader(models):
+    assert processor.verify_models() == models[0].slug
+
+
+def test_model_check_uses_bundled_config_not_remote_download_metadata(
+    models, monkeypatch
+):
+    metadata = sys.modules["bs_roformer.checkpoints"]
+    original = metadata.artifact_metadata
+
+    def remote_metadata(slug, kind):
+        if kind == "config":
+            return {"size": 4613, "sha256": "0" * 64}
+        return original(slug, kind)
+
+    monkeypatch.setattr(metadata, "artifact_metadata", remote_metadata)
     assert processor.verify_models() == models[0].slug
 
 
