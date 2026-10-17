@@ -7,7 +7,7 @@ DEFAULT_MAX_UPLOAD_BYTES = 200 * 1024 * 1024
 DEFAULT_MAX_AUDIO_DURATION_SECONDS = 10 * 60
 DEFAULT_MAX_UNFINISHED_JOBS_PER_USER = 2
 PROCESSING_MODES = ("local", "disabled", "queued")
-REGISTRATION_MODES = ("open", "closed")
+REGISTRATION_MODES = ("open", "closed", "invite")
 
 
 def get_jwt_secret_key() -> str:
@@ -88,5 +88,7 @@ def get_processing_mode() -> str:
 def get_registration_mode() -> str:
     mode = os.environ.get("ISOJAM_REGISTRATION_MODE", "closed")
     if mode not in REGISTRATION_MODES:
-        raise RuntimeError("ISOJAM_REGISTRATION_MODE must be 'open' or 'closed'")
+        raise RuntimeError(
+            "ISOJAM_REGISTRATION_MODE must be 'open', 'closed', or 'invite'"
+        )
     return mode

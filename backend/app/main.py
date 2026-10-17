@@ -55,7 +55,7 @@ def create_app(
         raise ValueError("processing_mode must be 'local', 'disabled', or 'queued'")
 
     if registration_mode is not None and registration_mode not in REGISTRATION_MODES:
-        raise ValueError("registration_mode must be 'open' or 'closed'")
+        raise ValueError("registration_mode must be 'open', 'closed', or 'invite'")
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):

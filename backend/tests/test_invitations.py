@@ -17,25 +17,8 @@ from sqlalchemy.orm import sessionmaker
 
 import app.database as database
 import app.invitations as invitations
-from app.database import enable_sqlite_foreign_keys
-from app.db_models import Base, RegistrationInvitation, User
+from app.db_models import RegistrationInvitation, User
 from tests.factories import create_test_user
-
-
-@pytest.fixture(params=["models", "migration"])
-def invitation_sessions(request, tmp_path, monkeypatch):
-    url = URL.create("sqlite", database=str(tmp_path / "invitations.db"))
-    if request.param == "migration":
-        monkeypatch.setenv("ALEMBIC_DATABASE_URL", str(url))
-        command.upgrade(Config("alembic.ini"), "head")
-    engine = create_engine(url)
-    enable_sqlite_foreign_keys(engine)
-    if request.param == "models":
-        Base.metadata.create_all(engine)
-    try:
-        yield sessionmaker(engine)
-    finally:
-        engine.dispose()
 
 
 def test_issuance_persists_only_a_hash_with_normalized_email_and_utc_expiry(

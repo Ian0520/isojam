@@ -91,8 +91,10 @@ settings documented in [Configuration](configuration.md).
 Registration is closed by default. For this local exercise, set
 `ISOJAM_REGISTRATION_MODE=open` in the runtime settings file when creating an
 account. Set it back to `closed` and replace the container to stop new signups;
-existing accounts can still log in. The smoke script opens its disposable first
-server explicitly and closes registration on replacement, verifying both states.
+existing accounts can still log in. Use `invite` for code-based registration through
+the API; see the [invitation guide](invitations.md). The smoke script registers
+with an owner-issued code, verifies replay rejection after replacement, then
+closes registration and checks persisted login.
 
 ## 3. Create persistent storage and migrate
 

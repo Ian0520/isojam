@@ -28,14 +28,13 @@ WAV hashes and data persistence across API container replacement. Fresh recovery
 without another worker launch. Smoke resources have unique names/ownership labels
 and are removed afterwards. Real GPU inference is validated separately locally.
 
-Each smoke explicitly opens registration on its first server, then closes it on
-replacement. Existing and new emails receive the same registration rejection,
-while the persisted account still logs in and accesses its uploads/jobs. The
-packaged runtime's registration default is also checked as closed.
-
 The packaged owner command issues an invitation on the disposable volume before
-the API starts. Its digest and seven-day expiry survive container replacement,
-and it creates no account. The raw invitation code is kept out of smoke output.
+the API starts. The first server runs invitation-only registration: invalid codes
+are rejected, and the correct code creates its account once. Replacement in the
+same mode preserves the used flag and rejects replay. Another replacement closes
+registration and preserves login and existing uploads/jobs. The invitation hash,
+seven-day expiry and use timestamp survive all replacements. The runtime default
+is also checked as closed. The raw code is kept out of smoke output.
 
 ## Run the same checks locally
 

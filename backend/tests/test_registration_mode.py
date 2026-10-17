@@ -17,20 +17,20 @@ def test_registration_mode_defaults_to_closed(monkeypatch):
     assert get_registration_mode() == "closed"
 
 
-@pytest.mark.parametrize("mode", ["open", "closed"])
+@pytest.mark.parametrize("mode", ["open", "closed", "invite"])
 def test_registration_mode_reads_environment(monkeypatch, mode):
     monkeypatch.setenv("ISOJAM_REGISTRATION_MODE", mode)
     assert get_registration_mode() == mode
 
 
-@pytest.mark.parametrize("mode", ["", " ", "OPEN", "invite", " open "])
+@pytest.mark.parametrize("mode", ["", " ", "OPEN", "invited", " open "])
 def test_registration_mode_rejects_invalid_environment(monkeypatch, mode):
     monkeypatch.setenv("ISOJAM_REGISTRATION_MODE", mode)
     with pytest.raises(RuntimeError, match="ISOJAM_REGISTRATION_MODE"):
         get_registration_mode()
 
 
-@pytest.mark.parametrize("mode", ["", "OPEN", "invite", False, 1, []])
+@pytest.mark.parametrize("mode", ["", "OPEN", "invited", False, 1, []])
 def test_invalid_injected_registration_mode_is_rejected(mode):
     with pytest.raises(ValueError, match="registration_mode"):
         create_app(registration_mode=mode)
@@ -52,7 +52,9 @@ def test_invalid_registration_environment_fails_before_model_loading(
     model_factory.assert_not_called()
 
 
-@pytest.mark.parametrize("mode, expected_status", [("open", 201), ("closed", 403)])
+@pytest.mark.parametrize(
+    "mode, expected_status", [("open", 201), ("closed", 403), ("invite", 403)]
+)
 def test_injected_registration_policy_overrides_environment(
     test_session_factory, jwt_secret_key, monkeypatch, mode, expected_status
 ):

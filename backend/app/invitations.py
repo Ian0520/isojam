@@ -1,7 +1,8 @@
-"""Issue registration invitations through an owner-only database command."""
+"""Email-bound invitation services and the owner-only issuance command."""
 
 import argparse
 import json
+import re
 import secrets
 import sys
 from collections.abc import Sequence
@@ -11,9 +12,11 @@ from hashlib import sha256
 from uuid import UUID
 
 from pydantic import EmailStr, TypeAdapter, ValidationError
+from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
+from app.db_models import User
 from app.repositories import invitations, users
 
 DEFAULT_EXPIRY_DAYS = 7
@@ -23,6 +26,14 @@ _email_adapter = TypeAdapter(EmailStr)
 
 class EmailAlreadyRegisteredError(ValueError):
     """An existing account does not need a registration invitation."""
+
+
+class InvitationUnavailableError(ValueError):
+    """Do not distinguish missing, mismatched, expired or consumed invitations."""
+
+
+def _utc_now() -> datetime:
+    return datetime.now(UTC)
 
 
 @dataclass(frozen=True)
@@ -68,7 +79,7 @@ def issue_invitation(
     if users.get_user_by_email(session, normalized_email) is not None:
         raise EmailAlreadyRegisteredError("Email is already registered")
     code = secrets.token_urlsafe(32)
-    created_at = datetime.now(UTC)
+    created_at = _utc_now()
     expires_at = created_at + timedelta(days=expires_in_days)
     invitation = invitations.create_invitation(
         session,
@@ -80,6 +91,37 @@ def issue_invitation(
     return IssuedInvitation(
         invitation.id, normalized_email, code, created_at, expires_at
     )
+
+
+def prepare_redemption(session: Session, *, email: str, code: str | None) -> str:
+    """Reject invalid codes cheaply; return a server-computed digest, not a grant."""
+    if code is None or re.fullmatch(r"[A-Za-z0-9_-]{43}", code) is None:
+        raise InvitationUnavailableError
+    code_hash = hash_invitation_code(code)
+    if not invitations.is_available(
+        session, email=email, code_hash=code_hash, now=_utc_now()
+    ):
+        raise InvitationUnavailableError
+    return code_hash
+
+
+def redeem_invitation(
+    session: Session, *, email: str, code_hash: str, password_hash: str
+) -> User:
+    """Claim and insert together; the caller commits or rolls back both changes.
+
+    Start fresh after preflight/password hashing. Acquire SQLite's write lock
+    before reading the clock, so a wait for another writer cannot preserve a stale
+    pre-expiry timestamp. The conditional UPDATE still rechecks all eligibility.
+    """
+    if session.in_transaction():
+        raise RuntimeError("Invitation redemption requires a fresh transaction")
+    session.execute(text("BEGIN IMMEDIATE"))
+    if not invitations.consume_invitation(
+        session, email=email, code_hash=code_hash, now=_utc_now()
+    ):
+        raise InvitationUnavailableError
+    return users.create_user(session, email, password_hash)
 
 
 def _email_argument(value: str) -> str:

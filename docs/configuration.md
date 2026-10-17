@@ -124,7 +124,7 @@ Startup fails if the environment variable is missing or blank.
 
 ### Configure Registration
 
-`ISOJAM_REGISTRATION_MODE` accepts `closed` (the default) or `open`. It is independent
+`ISOJAM_REGISTRATION_MODE` accepts `closed` (the default), `open`, or `invite`. It is independent
 of processing mode: closing registration does not disable login or work submitted
 by existing accounts. Invalid values, including blank values, fail startup before
 the model loads.
@@ -143,9 +143,20 @@ can return `422` or `413` before the endpoint runs.
 
 The mode is read once during application startup. Restart the server to apply a
 change; replace a Docker container with the updated runtime setting. Closing
-registration does not remove users or invalidate their tokens. The owner can
-[issue and store invitations](invitations.md), but redeeming them during
-registration, email verification and account revocation are not implemented yet.
+registration does not remove users or invalidate their tokens.
+
+With `invite`, `POST /register` requires a valid `invitation_code` belonging to the
+normalized email. Missing, incorrect, expired, used and email-mismatched codes
+return the same `403`, `{"detail":"Invitation is invalid or unavailable"}`. A valid
+code whose email already has an account receives that same response. Codes are
+case-sensitive and must be supplied exactly as issued. `open` requires no code
+and does not consume a supplied invitation; `closed` rejects it regardless.
+
+Claiming the invitation and creating the account commit in one transaction.
+The API rechecks expiry and unused state under SQLite's write lock, after password
+hashing and after any lock wait. A rolled-back transaction leaves both changes
+undone. See [invitation operation and redemption](invitations.md). The browser
+invitation field, email verification and account revocation remain later work.
 
 ### Configure Upload Limits
 

@@ -18,7 +18,7 @@ demo and a separate queued worker with durable execution and publication records
 
 ## What works
 
-- Account registration with an explicit open/closed policy, Argon2 password hashing and JWT login.
+- Account registration with open, closed and invitation-only modes, Argon2 password hashing and JWT login.
 - Authenticated WAV uploads with request, file-size, duration and decoded-audio validation.
 - Ownership checks on uploads, jobs and stem downloads.
 - Owner-scoped job-history API with cursor pagination and original filenames.
@@ -91,7 +91,8 @@ prerequisites and the tested workflow.
 
 Registration defaults to `closed`. The demo explicitly opens it for account
 creation; set it back to `closed` and restart to stop new signups while existing
-accounts can still log in. Invitation redemption is not implemented yet. See the
+accounts can still log in. Invitation redemption is available through the API;
+the browser invitation field is not implemented yet. See the
 [registration policy](docs/configuration.md#configure-registration).
 
 ## Verify without a GPU

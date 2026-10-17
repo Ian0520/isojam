@@ -195,6 +195,10 @@ print('Non-root runtime, pinned dependencies, and volume permissions passed')
         )
         print("Migrations passed on disposable named volume", flush=True)
 
+        credentials = {
+            "email": "container@example.com",
+            "password": "correct-horse-battery-staple",
+        }
         invitation = json.loads(
             docker(
                 "run",
@@ -205,20 +209,16 @@ print('Non-root runtime, pinned dependencies, and volume permissions passed')
                 "-m",
                 "app.invitations",
                 "create",
-                "invited@example.com",
+                credentials["email"],
                 env=env,
             ).stdout
         )
-        invitation_hash = hashlib.sha256(invitation.pop("code").encode()).hexdigest()
-
-        credentials = {
-            "email": "container@example.com",
-            "password": "correct-horse-battery-staple",
-        }
+        invitation_code = invitation.pop("code")
+        invitation_hash = hashlib.sha256(invitation_code.encode()).hexdigest()
         payload = make_wav()
         upload_id = None
         job_id = None
-        for phase in ("first-start", "replacement"):
+        for phase in ("first-start", "replacement", "registration-closed"):
             docker(
                 "run",
                 "--detach",
@@ -227,7 +227,7 @@ print('Non-root runtime, pinned dependencies, and volume permissions passed')
                 *common,
                 "--env",
                 "ISOJAM_REGISTRATION_MODE="
-                + ("open" if phase == "first-start" else "closed"),
+                + ("closed" if phase == "registration-closed" else "invite"),
                 "--publish",
                 "127.0.0.1::8000",
                 args.image,
@@ -244,8 +244,42 @@ print('Non-root runtime, pinned dependencies, and volume permissions passed')
             wait_for_health(name, port)
             verify_browser_assets(port, args.processing_mode)
             if phase == "first-start":
-                status, _ = post_json(port, "/register", credentials)
+                for invalid in (
+                    credentials,
+                    {**credentials, "invitation_code": "wrong-code"},
+                    {
+                        **credentials,
+                        "email": "not-invited@example.com",
+                        "invitation_code": invitation_code,
+                    },
+                ):
+                    status, body = post_json(port, "/register", invalid)
+                    assert status == 403 and body == {
+                        "detail": "Invitation is invalid or unavailable"
+                    }
+                status, _ = post_json(
+                    port,
+                    "/register",
+                    {**credentials, "invitation_code": invitation_code},
+                )
                 assert status == 201, f"Registration returned {status}"
+                print(
+                    "Invitation-only registration rejected invalid codes and accepted its owner",
+                    flush=True,
+                )
+            if phase != "registration-closed":
+                status, body = post_json(
+                    port,
+                    "/register",
+                    {**credentials, "invitation_code": invitation_code},
+                )
+                assert status == 403 and body == {
+                    "detail": "Invitation is invalid or unavailable"
+                }
+                if phase == "replacement":
+                    print(
+                        "Invitation remained consumed after API replacement", flush=True
+                    )
             else:
                 for email in (credentials["email"], "not-invited@example.com"):
                     status, body = post_json(
@@ -330,9 +364,10 @@ with sqlite3.connect('/var/lib/isojam/metadata/isojam.db') as connection:
         'select email, code_hash, created_at, expires_at, used_at from registration_invitations where id=?',
         (sys.argv[5].replace('-', ''),),
     ).fetchone()
-    assert invitation[:2] == ('invited@example.com', sys.argv[6])
+    assert invitation[:2] == ('container@example.com', sys.argv[6])
     assert datetime.fromisoformat(invitation[3]) - datetime.fromisoformat(invitation[2]) == timedelta(days=7)
-    assert invitation[4] is None
+    assert invitation[4] is not None
+    assert datetime.fromisoformat(invitation[2]) <= datetime.fromisoformat(invitation[4]) < datetime.fromisoformat(invitation[3])
     assert connection.execute('select count(*) from registration_invitations').fetchone()[0] == 1
     queued = sys.argv[3] == 'queued'
     assert connection.execute('select count(*) from jobs').fetchone()[0] == int(queued)
