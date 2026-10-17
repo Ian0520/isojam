@@ -33,6 +33,10 @@ replacement. Existing and new emails receive the same registration rejection,
 while the persisted account still logs in and accesses its uploads/jobs. The
 packaged runtime's registration default is also checked as closed.
 
+The packaged owner command issues an invitation on the disposable volume before
+the API starts. Its digest and seven-day expiry survive container replacement,
+and it creates no account. The raw invitation code is kept out of smoke output.
+
 ## Run the same checks locally
 
 From the repository root with Docker running:

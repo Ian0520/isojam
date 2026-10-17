@@ -91,7 +91,7 @@ prerequisites and the tested workflow.
 
 Registration defaults to `closed`. The demo explicitly opens it for account
 creation; set it back to `closed` and restart to stop new signups while existing
-accounts can still log in. Invitation codes are not implemented yet. See the
+accounts can still log in. Invitation redemption is not implemented yet. See the
 [registration policy](docs/configuration.md#configure-registration).
 
 ## Verify without a GPU
@@ -129,6 +129,7 @@ are not yet implemented.
 ## Explore the project
 
 - [Configuration and API reference](docs/configuration.md)
+- [Owner invitation issuance](docs/invitations.md)
 - [Docker operation and smoke tests](docs/containers.md)
 - [Continuous integration](docs/ci.md)
 - [Demo recording and measured evidence](docs/demo.md)

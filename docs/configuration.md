@@ -143,8 +143,9 @@ can return `422` or `413` before the endpoint runs.
 
 The mode is read once during application startup. Restart the server to apply a
 change; replace a Docker container with the updated runtime setting. Closing
-registration does not remove users or invalidate their tokens. Invitation codes,
-email verification and account revocation are not implemented in this slice.
+registration does not remove users or invalidate their tokens. The owner can
+[issue and store invitations](invitations.md), but redeeming them during
+registration, email verification and account revocation are not implemented yet.
 
 ### Configure Upload Limits
 

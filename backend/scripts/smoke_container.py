@@ -195,6 +195,22 @@ print('Non-root runtime, pinned dependencies, and volume permissions passed')
         )
         print("Migrations passed on disposable named volume", flush=True)
 
+        invitation = json.loads(
+            docker(
+                "run",
+                "--rm",
+                *common,
+                args.image,
+                "python",
+                "-m",
+                "app.invitations",
+                "create",
+                "invited@example.com",
+                env=env,
+            ).stdout
+        )
+        invitation_hash = hashlib.sha256(invitation.pop("code").encode()).hexdigest()
+
         credentials = {
             "email": "container@example.com",
             "password": "correct-horse-battery-staple",
@@ -302,6 +318,7 @@ print('Non-root runtime, pinned dependencies, and volume permissions passed')
             docker("rm", name)
 
         persistence_check = """
+from datetime import datetime, timedelta
 from pathlib import Path
 import hashlib
 import sqlite3
@@ -309,6 +326,14 @@ import sys
 
 with sqlite3.connect('/var/lib/isojam/metadata/isojam.db') as connection:
     assert connection.execute('select count(*) from users').fetchone()[0] == 1
+    invitation = connection.execute(
+        'select email, code_hash, created_at, expires_at, used_at from registration_invitations where id=?',
+        (sys.argv[5].replace('-', ''),),
+    ).fetchone()
+    assert invitation[:2] == ('invited@example.com', sys.argv[6])
+    assert datetime.fromisoformat(invitation[3]) - datetime.fromisoformat(invitation[2]) == timedelta(days=7)
+    assert invitation[4] is None
+    assert connection.execute('select count(*) from registration_invitations').fetchone()[0] == 1
     queued = sys.argv[3] == 'queued'
     assert connection.execute('select count(*) from jobs').fetchone()[0] == int(queued)
     assert connection.execute('select count(*) from job_submission_receipts').fetchone()[0] == int(queued)
@@ -323,7 +348,7 @@ with sqlite3.connect('/var/lib/isojam/metadata/isojam.db') as connection:
     stored = rows[0][1]
 path = Path('/var/lib/isojam/audio/uploads') / stored
 assert hashlib.sha256(path.read_bytes()).hexdigest() == sys.argv[2]
-print('Account, upload, job/receipt state, and exact WAV bytes survived container replacement')
+print('Account, invitation hash/expiry, upload, job/receipt state, and exact WAV bytes survived container replacement')
 """
         result = docker(
             "run",
@@ -337,6 +362,8 @@ print('Account, upload, job/receipt state, and exact WAV bytes survived containe
             hashlib.sha256(payload).hexdigest(),
             args.processing_mode,
             job_id or "",
+            invitation["id"],
+            invitation_hash,
             env=env,
         )
         print(result.stdout.strip(), flush=True)
