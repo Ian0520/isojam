@@ -1,4 +1,4 @@
-"""Regenerate the Linux/Python 3.12 API and development dependency locks."""
+"""Regenerate Linux/Python 3.12 CPU locks or GPU additions."""
 
 import argparse
 import os
@@ -13,6 +13,11 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--upgrade", action="store_true", help="Resolve newer compatible versions."
+    )
+    parser.add_argument(
+        "--gpu",
+        action="store_true",
+        help="Generate GPU additions constrained by the API lock.",
     )
     args = parser.parse_args()
     if (
@@ -33,6 +38,8 @@ def main():
     backend = Path(__file__).resolve().parents[1]
     env = os.environ.copy()
     command = "python scripts/compile_requirements.py"
+    if args.gpu:
+        command += " --gpu"
     if args.upgrade:
         command += " --upgrade"
     env["CUSTOM_COMPILE_COMMAND"] = command
@@ -43,13 +50,23 @@ def main():
         "compile",
         "--quiet",
         "--generate-hashes",
-        "--all-build-deps",
         "--allow-unsafe",
         "--strip-extras",
         "--no-emit-options",
     ]
     if args.upgrade:
         common.append("--upgrade")
+    if args.gpu:
+        for name in ("requirements-gpu", "requirements-gpu-build"):
+            subprocess.run(
+                [*common, "--output-file", name + ".txt", name + ".in"],
+                cwd=backend,
+                env=env,
+                check=True,
+            )
+            print(f"Generated {name}.txt", flush=True)
+        return
+    common.append("--all-build-deps")
     for output, extra in [
         ("requirements-api.txt", []),
         (
