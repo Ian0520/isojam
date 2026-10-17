@@ -47,3 +47,6 @@ jobs:
         run: >-
           python3 backend/scripts/smoke_container.py --image isojam-api:ci
           --processing-mode queued --dispatch-fake-worker --recover-publication
+
+      - name: Verify Compose startup, shutdown and persistent replacement
+        run: python3 backend/scripts/smoke_compose.py --api-image isojam-api:ci

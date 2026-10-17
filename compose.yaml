@@ -1,0 +1,103 @@
+name: isojam-local
+
+x-api-image: &api-image
+  image: ${ISOJAM_API_IMAGE:-isojam-api:local-stack}
+  build:
+    context: ./backend
+    dockerfile: Dockerfile
+
+x-processor-image: &processor-image
+  image: ${ISOJAM_PROCESSOR_IMAGE:-isojam-processor:local-stack}
+  build:
+    context: ./backend
+    dockerfile: Dockerfile.gpu
+
+x-storage-environment: &storage-environment
+  ISOJAM_DATABASE_PATH: /var/lib/isojam/metadata/isojam.db
+  ISOJAM_AUDIO_STORAGE_DIR: /var/lib/isojam/audio
+  ISOJAM_MAX_UPLOAD_BYTES: ${ISOJAM_MAX_UPLOAD_BYTES:-209715200}
+  ISOJAM_MAX_AUDIO_DURATION_SECONDS: ${ISOJAM_MAX_AUDIO_DURATION_SECONDS:-600}
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: "3"
+
+services:
+  migrate:
+    <<: *api-image
+    command: [python, -m, alembic, upgrade, head]
+    environment:
+      <<: *storage-environment
+    volumes:
+      - data:/var/lib/isojam
+    restart: "no"
+    logging: *logging
+
+  processor:
+    <<: *processor-image
+    init: true
+    gpus: all
+    environment:
+      <<: *storage-environment
+      BS_ROFORMER_MODELS_PATH: /var/cache/isojam/models
+    volumes:
+      - data:/var/lib/isojam
+      - models:/var/cache/isojam/models:ro
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: [CMD, python, -m, app.processor, health]
+      interval: 5s
+      timeout: 3s
+      start_period: 30s
+      retries: 12
+    # Covers the dispatcher's default 30-minute job timeout plus publication.
+    stop_grace_period: 35m
+    restart: "no"
+    logging: *logging
+
+  api:
+    <<: *api-image
+    init: true
+    environment:
+      <<: *storage-environment
+      ISOJAM_PROCESSING_MODE: queued
+      ISOJAM_REGISTRATION_MODE: ${ISOJAM_REGISTRATION_MODE:-closed}
+      ISOJAM_JWT_SECRET_KEY: ${ISOJAM_JWT_SECRET_KEY:?Set a stable ISOJAM_JWT_SECRET_KEY in .env}
+      ISOJAM_MAX_UNFINISHED_JOBS_PER_USER: ${ISOJAM_MAX_UNFINISHED_JOBS_PER_USER:-2}
+    ports:
+      - "127.0.0.1:${ISOJAM_PORT:-8000}:8000"
+    volumes:
+      - data:/var/lib/isojam
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      processor:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, python, -c, "from urllib.request import urlopen; urlopen('http://127.0.0.1:8000/health', timeout=2).close()"]
+      interval: 5s
+      timeout: 3s
+      start_period: 10s
+      retries: 6
+    stop_grace_period: 30s
+    restart: "no"
+    logging: *logging
+
+  models:
+    <<: *processor-image
+    profiles: [setup]
+    command: [python, -m, app.processor, prepare-models]
+    environment:
+      BS_ROFORMER_MODELS_PATH: /var/cache/isojam/models
+    volumes:
+      - models:/var/cache/isojam/models
+    restart: "no"
+    logging: *logging
+
+volumes:
+  data:
+  models:
