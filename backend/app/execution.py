@@ -103,6 +103,36 @@ class WorkerLaunchError(RuntimeError):
     """Delivery or its report is unresolved; never permission to submit again."""
 
 
+class WorkerExecutionFailed(WorkerLaunchError):
+    """This launch has a durable, controller-confirmed nonzero exit.
+
+    Reconcile saved results before finalizing failure; never repeat inference.
+    """
+
+
+def parse_worker_report(
+    raw: bytes, invocation: WorkerInvocation, *, worker_pid: int, exit_code: int
+) -> WorkerReport:
+    """Validate bounded reply data against the actual launched child.
+
+    A matching report does not establish termination, authority or valid files.
+    """
+    if len(raw) > MAX_CONTROL_MESSAGE_BYTES:
+        raise WorkerLaunchError("Local worker report exceeds the message limit")
+    try:
+        report = WorkerReport.model_validate_json(raw)
+    except ValidationError as error:
+        raise WorkerLaunchError("Local worker returned an invalid report") from error
+    if (
+        (report.job_id, report.attempt_id, report.invocation_id)
+        != (invocation.job_id, invocation.attempt_id, invocation.invocation_id)
+        or report.worker_pid != worker_pid
+        or exit_code != WORKER_EXIT_CODES[report.status]
+    ):
+        raise WorkerLaunchError("Local worker report does not match its invocation")
+    return report
+
+
 class ExecutionAdapter(Protocol):
     """Trusted synchronous delivery: confirm and persist execution stop before success.
 
@@ -167,6 +197,7 @@ class LocalFakeWorkerAdapter:
                     stdout=output,
                     stderr=subprocess.DEVNULL,
                     env=worker_env,
+                    start_new_session=True,
                 ) as result:
                     try:
                         result.communicate(input=payload, timeout=self.timeout_seconds)
@@ -203,27 +234,9 @@ class LocalFakeWorkerAdapter:
                 raise WorkerLaunchError("Local fake worker timed out; execution ended")
             output.seek(0)
             raw = output.read(MAX_CONTROL_MESSAGE_BYTES + 1)
-        if len(raw) > MAX_CONTROL_MESSAGE_BYTES:
-            raise WorkerLaunchError(
-                "Local fake worker report exceeds the message limit"
-            )
-        try:
-            report = WorkerReport.model_validate_json(raw)
-        except ValidationError as error:
-            raise WorkerLaunchError(
-                "Local fake worker returned an invalid report"
-            ) from error
-        if (report.job_id, report.attempt_id, report.invocation_id) != (
-            invocation.job_id,
-            invocation.attempt_id,
-            invocation.invocation_id,
-        ) or (
-            result.returncode != WORKER_EXIT_CODES[report.status]
-            or report.worker_pid != result.pid
-        ):
-            raise WorkerLaunchError(
-                "Local fake worker report does not match its invocation"
-            )
+        report = parse_worker_report(
+            raw, invocation, worker_pid=result.pid, exit_code=result.returncode
+        )
         if report.status == "result_ready":
             identity = invocation.result_identity()
             if report.manifest_key != self.results.manifest_key(identity):

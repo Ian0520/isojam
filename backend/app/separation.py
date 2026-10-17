@@ -5,6 +5,8 @@ from tempfile import TemporaryDirectory
 def collect_output_paths(manifest) -> dict[str, Path]:
     paths = {}
     for output in manifest.outputs:
+        if output.output_id in paths:
+            raise ValueError("Duplicate model output ID")
         paths[output.output_id] = Path(output.output_path)
     return paths
 

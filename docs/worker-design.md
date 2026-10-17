@@ -4,6 +4,11 @@ Status: design proposed on 2026-10-02, with implemented slices recorded below.
 The document itself changes no runtime behavior. Hosting provider and monthly budget remain undecided; selecting this
 design does not provision or purchase anything.
 
+Current real-model integration and the initial same-host release decision are
+tracked in [Real model worker](model-worker.md). The explicit `local-model`
+adapter now runs inference on the SQLite host; `local-fake` remains available for
+CPU exercises. The remote-worker sections below describe the broader design.
+
 ## Recommendation and reading guide
 
 Keep accepted work in the database, run a separate CPU dispatcher, and execute

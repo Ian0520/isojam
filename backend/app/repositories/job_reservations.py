@@ -36,6 +36,7 @@ class RecoverableAttempt:
     reservation: JobReservation
     invocation_id: UUID
     worker_pid: int | None
+    execution_exit_code: int
 
 
 @contextmanager
@@ -90,6 +91,7 @@ def reserve_next_job(
     dispatcher_id: UUID,
     reservation_ttl_seconds: int = 60,
     busy_timeout_ms: int = 1000,
+    reclaim_expired: bool = False,
 ) -> JobReservation | None:
     """Commit a first-attempt reservation for the oldest eligible queued job.
 
@@ -105,21 +107,36 @@ def reserve_next_job(
     identifiers only after the commit succeeds. Use a fresh dispatcher UUID per
     process lifetime. Reservation lifetime is 1-3600 seconds (default 60); it is
     pre-submission ownership, not a worker execution deadline.
+
+    With reclaim_expired=True, the sole occupied attempt may instead be an owned,
+    expired reservation still in its pre-submission phase. Reuse that attempt with
+    a new generation under this same lock. Submission/execution, unknown owners
+    and multiple occupied slots never qualify for this takeover.
     """
     _validate_dispatcher_id(dispatcher_id)
     _validate_reservation_lifetime(reservation_ttl_seconds)
+    if type(reclaim_expired) is not bool:
+        raise ValueError("reclaim_expired must be a boolean")
 
     with _reservation_transaction(engine, busy_timeout_ms) as connection:
-        active_attempt = connection.scalar(
+        active_attempts = connection.scalars(
             select(JobAttempt.id)
             .join(Job, Job.id == JobAttempt.job_id)
             .where(
                 Job.execution_backend == "queued",
                 JobAttempt.phase.not_in(TERMINAL_ATTEMPT_PHASES),
             )
-            .limit(1)
-        )
-        if active_attempt is not None:
+            .limit(2)
+        ).all()
+        if active_attempts:
+            if reclaim_expired and len(active_attempts) == 1:
+                return _reclaim_reserved_attempt(
+                    connection,
+                    active_attempts[0],
+                    dispatcher_id,
+                    reservation_ttl_seconds,
+                    _utc_now(),
+                )
             return None
 
         has_attempt = select(JobAttempt.id).where(JobAttempt.job_id == Job.id).exists()
@@ -220,6 +237,7 @@ def find_recoverable_attempt(
                 JobAttempt.reservation_expires_at,
                 JobAttempt.invocation_id,
                 JobAttempt.local_worker_pid,
+                JobAttempt.execution_exit_code,
             )
             .where(
                 JobAttempt.phase == "running",
@@ -238,7 +256,7 @@ def find_recoverable_attempt(
         ).one_or_none()
         if row is None:
             return None
-        return RecoverableAttempt(JobReservation(*row[:6]), row[6], row[7])
+        return RecoverableAttempt(JobReservation(*row[:6]), row[6], row[7], row[8])
 
 
 def reclaim_reservation(
@@ -262,32 +280,44 @@ def reclaim_reservation(
         raise ValueError("attempt_id must be a UUID")
     with _reservation_transaction(engine, busy_timeout_ms) as connection:
         now = _utc_now()
-        row = connection.execute(
-            update(JobAttempt)
-            .where(
-                JobAttempt.id == attempt_id,
-                JobAttempt.phase == "reserved",
-                JobAttempt.dispatcher_id.is_not(None),
-                JobAttempt.dispatcher_generation > 0,
-                JobAttempt.reservation_expires_at <= now,
-                _current_queued_attempt("pending"),
-            )
-            .values(
-                dispatcher_id=dispatcher_id,
-                dispatcher_generation=JobAttempt.dispatcher_generation + 1,
-                reservation_expires_at=now + timedelta(seconds=reservation_ttl_seconds),
-                updated_at=now,
-            )
-            .returning(
-                JobAttempt.job_id,
-                JobAttempt.id,
-                JobAttempt.attempt_number,
-                JobAttempt.dispatcher_id,
-                JobAttempt.dispatcher_generation,
-                JobAttempt.reservation_expires_at,
-            )
-        ).one_or_none()
-        return None if row is None else JobReservation(*row)
+        return _reclaim_reserved_attempt(
+            connection, attempt_id, dispatcher_id, reservation_ttl_seconds, now
+        )
+
+
+def _reclaim_reserved_attempt(
+    connection: Connection,
+    attempt_id: UUID,
+    dispatcher_id: UUID,
+    reservation_ttl_seconds: int,
+    now: datetime,
+) -> JobReservation | None:
+    row = connection.execute(
+        update(JobAttempt)
+        .where(
+            JobAttempt.id == attempt_id,
+            JobAttempt.phase == "reserved",
+            JobAttempt.dispatcher_id.is_not(None),
+            JobAttempt.dispatcher_generation > 0,
+            JobAttempt.reservation_expires_at <= now,
+            _current_queued_attempt("pending"),
+        )
+        .values(
+            dispatcher_id=dispatcher_id,
+            dispatcher_generation=JobAttempt.dispatcher_generation + 1,
+            reservation_expires_at=now + timedelta(seconds=reservation_ttl_seconds),
+            updated_at=now,
+        )
+        .returning(
+            JobAttempt.job_id,
+            JobAttempt.id,
+            JobAttempt.attempt_number,
+            JobAttempt.dispatcher_id,
+            JobAttempt.dispatcher_generation,
+            JobAttempt.reservation_expires_at,
+        )
+    ).one_or_none()
+    return None if row is None else JobReservation(*row)
 
 
 def begin_submission(
@@ -602,6 +632,101 @@ def record_execution_stopped(
                 updated_at=max(stopped, attempt["updated_at"]),
             )
         )
+        return True
+
+
+def fail_stopped_attempt(
+    engine: Engine,
+    reservation: JobReservation,
+    *,
+    invocation_id: UUID,
+    busy_timeout_ms: int = 1000,
+) -> bool:
+    """Atomically fail a stopped, unsuccessful invocation with no published result.
+
+    The trusted caller must first establish that no manifest exists in storage.
+    Recheck current authority, latest attempt and durable nonzero exit under the
+    write lock. Never infer termination from heartbeat age or a start deadline.
+    This releases capacity but does not authorize an inference retry. An identical
+    failure acknowledgement preserves timestamps; conflicting state is denied.
+    """
+    _validate_reservation(reservation)
+    _validate_invocation_id(invocation_id)
+    with _reservation_transaction(engine, busy_timeout_ms) as connection:
+        attempt = (
+            connection.execute(
+                select(JobAttempt.__table__).where(
+                    JobAttempt.id == reservation.attempt_id,
+                    JobAttempt.job_id == reservation.job_id,
+                    JobAttempt.attempt_number == reservation.attempt_number,
+                    JobAttempt.dispatcher_id == reservation.dispatcher_id,
+                    JobAttempt.dispatcher_generation
+                    == reservation.dispatcher_generation,
+                    JobAttempt.invocation_id == invocation_id,
+                    JobAttempt.started_at.is_not(None),
+                    JobAttempt.execution_stopped_at.is_not(None),
+                    JobAttempt.execution_exit_code != 0,
+                    or_(
+                        and_(
+                            JobAttempt.phase == "running",
+                            JobAttempt.finished_at.is_(None),
+                            _current_queued_attempt("processing"),
+                        ),
+                        and_(
+                            JobAttempt.phase == "failed",
+                            JobAttempt.finished_at.is_not(None),
+                            _current_queued_attempt("failed"),
+                        ),
+                    ),
+                )
+            )
+            .mappings()
+            .one_or_none()
+        )
+        if attempt is None:
+            return False
+        if (
+            attempt["result_manifest_key"] is not None
+            or attempt["result_manifest_sha256"] is not None
+            or connection.scalar(
+                select(JobOutput.job_id)
+                .where(JobOutput.job_id == reservation.job_id)
+                .limit(1)
+            )
+            is not None
+        ):
+            return False
+        if attempt["phase"] == "failed":
+            return True
+        finished = max(
+            _utc_now(),
+            attempt["started_at"],
+            attempt["execution_stopped_at"],
+            attempt["last_heartbeat_at"] or attempt["started_at"],
+        )
+        connection.execute(
+            update(JobAttempt)
+            .where(JobAttempt.id == reservation.attempt_id)
+            .values(
+                phase="failed",
+                finished_at=finished,
+                updated_at=max(finished, attempt["updated_at"]),
+            )
+        )
+        changed = connection.scalar(
+            update(Job)
+            .where(
+                Job.id == reservation.job_id,
+                Job.execution_backend == "queued",
+                Job.status == "processing",
+            )
+            .values(status="failed", updated_at=func.max(finished, Job.updated_at))
+            .returning(Job.id)
+        )
+        if changed is None:
+            raise RuntimeError(
+                "Failure finalization could not update its processing job"
+            )
         return True
 
 

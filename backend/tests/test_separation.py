@@ -40,6 +40,17 @@ def test_collect_output_paths():
     assert paths["guitar"] == Path("data/output/test_guitar.wav")
 
 
+def test_collect_output_paths_rejects_duplicate_stem_ids():
+    manifest = SimpleNamespace(
+        outputs=[
+            SimpleNamespace(output_id="guitar", output_path="first.wav"),
+            SimpleNamespace(output_id="guitar", output_path="second.wav"),
+        ]
+    )
+    with pytest.raises(ValueError, match="Duplicate model output ID"):
+        separation.collect_output_paths(manifest)
+
+
 @pytest.mark.parametrize("filename", ["test.wav", "test.WAV", "test.WaV"])
 def test_separate_audio(tmp_path, filename):
     input_path = tmp_path / filename
