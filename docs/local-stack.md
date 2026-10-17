@@ -64,9 +64,11 @@ docker compose run --rm models
 ```
 
 The first build downloads large CUDA wheels. The model setup command downloads
-the pinned checkpoint and configuration and verifies their sizes and SHA-256
-hashes. Repeating it reuses valid cached files. Model weights are not embedded in
-the image or committed to Git. Normal processor startup only verifies the cache;
+the pinned checkpoint, copies the configuration bundled in the pinned inference
+package and verifies their sizes and SHA-256 hashes. The checkpoint uses the
+registry digest; the cached YAML must match the bundled config, whose bytes differ
+from the upstream remote-download YAML. Repeating it reuses valid cached files.
+Model weights are not embedded in the image or committed to Git. Normal processor startup only verifies the cache;
 it fails with a useful error if files are missing or damaged.
 
 Start the stack:
@@ -113,11 +115,15 @@ kill can interrupt inference and leave an attempt requiring inspection. An old
 heartbeat is not evidence that GPU execution ended, so startup does not blindly
 retry uncertain work. See [worker recovery](model-worker.md).
 
-After source changes, rebuild and replace the services:
+After source changes, drain the services, then rebuild and replace them:
 
 ```bash
+docker compose stop
 docker compose up --build --abort-on-container-failure
 ```
+
+Stopping first also ensures a future migration cannot run while an old API or
+worker still accesses the database.
 
 This retains the data/model volumes. Restarting an existing container alone does
 not copy in changed source or settings. A changed Compose environment also needs
@@ -194,3 +200,29 @@ use `.env`, personal recordings or the normal stack's data.
 The existing [real model service smoke](model-worker.md#real-service-verification-on-2026-10-17)
 can also run inside the GPU image to check interrupted-worker handling. CPU CI cannot
 prove CUDA compatibility; actual GPU checks remain separate.
+
+## Verification recorded on 2026-10-18
+
+Both images built from the pinned Python base and hash-locked dependencies and
+passed `pip check`. The GPU image passed its CUDA/cache preflight on an NVIDIA
+GeForce RTX 4060 Laptop GPU with PyTorch 2.13.0+cu130. Missing GPU access and model
+assets fail explicitly; model preparation reused the existing read-only cache.
+Both GPU dependency locks regenerated identically with the pinned tooling.
+
+The real model service smoke also passed inside the GPU image: API restart
+preserved one invocation and seven owned downloads, an interrupted worker gained
+confirmed stop proof without automatic inference retry, and the same dispatcher
+completed later work. It finished with exactly three jobs and three attempts.
+
+Both the CPU fake-worker and real GPU Compose checks passed. During real
+inference, the API stopped before the processor; the processor published its
+current result and exited zero while a second job stayed pending without an
+attempt. Recreated containers retained login, the original attempt, unchanged
+upload bytes and all seven exact downloads, then processed the queued job.
+Each smoke removed its disposable data and Docker resources. These short
+synthetic WAV checks establish lifecycle behavior, not throughput or audio quality.
+
+The complete CPU suite passed all 1,378 tests, including 26 processor tests, in
+378.97 seconds under locked dependencies as UID/GID 10001. Ruff lint and formatting
+checks passed across all 109 maintained Python files. The run reported fifteen
+existing SQLAlchemy `Result.tuples()` deprecation warnings in job-history tests.

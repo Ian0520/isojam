@@ -10,6 +10,7 @@ import secrets
 import signal
 import struct
 import subprocess
+import sys
 import tempfile
 import time
 import uuid
@@ -312,6 +313,7 @@ def main():
                     SNAPSHOT,
                 ).stdout
             )
+            assert len(saved["jobs"]) == (2 if args.models_dir else 1)
             completed = next(
                 j for j in saved["jobs"] if j["id"] == uuid.UUID(job_id).hex
             )
@@ -321,7 +323,8 @@ def main():
             )
             assert completed["execution_stopped_at"] and upload_hash in saved["uploads"]
             if args.models_dir:
-                assert sum(j["status"] == "pending" for j in saved["jobs"]) == 1
+                pending = [j for j in saved["jobs"] if j["status"] == "pending"]
+                assert len(pending) == 1 and pending[0]["attempt_id"] is None
             print(
                 "API stopped first; processor exited cleanly with committed stop proof and outputs",
                 flush=True,
@@ -356,6 +359,8 @@ def main():
                     )
                 assert request(port, "GET", path)[0] == 401
             after = snapshot()
+            assert len(after["jobs"]) == len(saved["jobs"])
+            assert {j["id"] for j in after["jobs"]} == {j["id"] for j in saved["jobs"]}
             assert (
                 next(j for j in after["jobs"] if j["id"] == completed["id"])[
                     "attempt_id"
@@ -372,7 +377,7 @@ def main():
             if log.exists():
                 print(
                     log.read_text(errors="replace")[-16000:],
-                    file=__import__("sys").stderr,
+                    file=sys.stderr,
                 )
             raise
         finally:
