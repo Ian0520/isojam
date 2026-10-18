@@ -1,0 +1,5 @@
+# GPU additions to the locked CPU API environment, on CPython 3.12/Linux x86_64.
+-c requirements-api.txt
+torch==2.13.0
+# The same upstream commit as pyproject.toml, as a hashable source archive.
+bs-roformer-infer @ https://github.com/openmirlab/bs-roformer-infer/archive/de35ada5817b878da0194ee2860253dda3a9c2b2.tar.gz

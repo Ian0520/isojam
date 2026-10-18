@@ -14,7 +14,8 @@ demo and a separate queued worker with durable execution and publication records
 [Watch the 14-second local demo](docs/demo/real-separation.webm) ·
 [Demo and verification evidence](docs/demo.md) ·
 [Setup and API guide](docs/configuration.md) ·
-[Container guide](docs/containers.md)
+[Container guide](docs/containers.md) ·
+[Local GPU stack](docs/local-stack.md)
 
 ## What works
 
@@ -27,6 +28,7 @@ demo and a separate queued worker with durable execution and publication records
 - Seven outputs: vocals, drums, bass, guitar, piano, other and instrumental.
 - Persistent metadata with Alembic migrations, per-user unfinished-job limits and idempotent job submission.
 - A non-root CPU API container with hash-locked dependencies and persistent storage.
+- A separate GPU processor image and Compose stack for local startup, draining shutdown and persistent data/model volumes.
 - A separate queued real-model worker with execution authorization, heartbeats, verified result bundles, atomic publication and restart reconciliation.
 - An explicit fake worker for CPU-only coordination and container checks.
 - GitHub Actions covering lint, formatting, tests, container packaging and interrupted-publication recovery.
@@ -40,8 +42,9 @@ demo and a separate queued worker with durable execution and publication records
 | `disabled` | CPU API and existing-result access | Authentication, uploads, status and downloads work; new jobs return 503. |
 
 The CPU Docker image defaults to `disabled` and does **not** contain the model.
-Real queued inference runs in the existing CUDA environment on the SQLite host;
-see [Real model worker](docs/model-worker.md). An unknown worker exit keeps its
+Real queued inference runs in the existing CUDA environment or the separate
+[GPU processor container](docs/local-stack.md) on the SQLite host.
+See [Real model worker](docs/model-worker.md). An unknown worker exit keeps its
 queue slot occupied; an old heartbeat alone is not enough to authorize replacement.
 
 With matching database/audio settings and the API in queued mode, start its worker
@@ -71,6 +74,11 @@ flowchart LR
 ```
 
 ## Try the local GPU demo
+
+For the containerized API and GPU processor, follow the
+[local Compose setup](docs/local-stack.md#first-setup). After building both images
+and preparing model assets, `docker compose up --abort-on-container-failure`
+starts the stack; Ctrl+C drains its active job and preserves the volumes.
 
 Use Ubuntu/WSL2, Python 3.12 and the existing CUDA inference environment.
 Follow the [setup guide](docs/configuration.md#setup) to install the inference

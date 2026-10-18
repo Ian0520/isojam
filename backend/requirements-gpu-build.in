@@ -1,0 +1,4 @@
+# Build backend for the pinned inference source archive, installed before metadata generation.
+-c requirements-api.txt
+-c requirements-gpu.txt
+hatchling
