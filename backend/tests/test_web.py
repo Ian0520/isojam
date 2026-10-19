@@ -42,3 +42,17 @@ def test_browser_assets_and_runtime_info_in_each_mode(
         )
     assert fake_model_session.called is False
     assert fake_model_session.closed is (mode == "local")
+
+
+@pytest.mark.parametrize("asset", ["app.js", "auth.js", "history.js", "styles.css"])
+def test_browser_assets_require_revalidation_including_not_modified(client, asset):
+    # The new URL also bypasses old entries cached before this policy existed.
+    url = f"/static/{asset}?v=workspace"
+    response = client.get(url)
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-cache"
+
+    cached = client.get(url, headers={"If-None-Match": response.headers["etag"]})
+    assert cached.status_code == 304
+    assert cached.headers["cache-control"] == "no-cache"
+    assert cached.content == b""

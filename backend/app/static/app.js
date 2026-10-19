@@ -1,5 +1,5 @@
-import { authenticate } from "./auth.js";
-import { JobHistory } from "./history.js";
+import { authenticate } from "./auth.js?v=workspace";
+import { JobHistory } from "./history.js?v=workspace";
 
 const $ = (id) => document.getElementById(id);
 const storage = {
@@ -40,6 +40,7 @@ const state = {
   key: null,
   accepted: false,
   job: null,
+  jobName: null,
   timer: null,
   previewUrl: null,
   previewTurn: 0,
@@ -55,15 +56,6 @@ const stemOrder = [
   "other",
   "instrumental",
 ];
-const descriptions = {
-  vocals: "The voice at the center",
-  drums: "Find the groove",
-  bass: "Follow the low end",
-  guitar: "Hear every phrase",
-  piano: "Keys and chords",
-  other: "Everything in between",
-  instrumental: "A track without the vocals",
-};
 class CancelledOperation extends Error {}
 const jobHistory = new JobHistory(jsonRequest, renderHistory);
 const historyDateFormat = new Intl.DateTimeFormat(undefined, {
@@ -96,12 +88,17 @@ function clearJob() {
   clearTimeout(state.timer);
   state.jobEpoch += 1;
   state.job = null;
+  state.jobName = null;
   state.uploadId = null;
   state.key = null;
   state.accepted = false;
   $("stems").replaceChildren();
   $("active-session").hidden = true;
-  $("empty-session").hidden = false;
+  $("session-panel").hidden = true;
+  $("session-title").textContent = "Recording";
+  $("upload-title").textContent = "Separate a recording";
+  $("upload-disclosure").open = true;
+  $("job-details").open = false;
   $("job-status").hidden = true;
   clearPreview();
 }
@@ -120,10 +117,11 @@ function clearSession() {
   jobHistory.clear();
   state.file = null;
   $("audio-file").value = "";
-  $("file-name").textContent = "Choose a WAV recording";
-  $("file-detail").textContent = "Select a song from your computer";
+  $("file-name").textContent = "Choose a WAV file";
+  $("file-detail").textContent = "Select a recording from your computer";
   $("resume-id").value = "";
   $("job-id-lookup").open = false;
+  $("signed-in").open = false;
   $("password").value = "";
   $("invitation-code").value = "";
   state.authMode = "login";
@@ -131,13 +129,17 @@ function clearSession() {
 }
 function updateControls() {
   const signedIn = Boolean(state.token);
-  const canRegister = ["open", "invite"].includes(state.info?.registration_mode);
+  const canRegister = ["open", "invite"].includes(
+    state.info?.registration_mode,
+  );
   const registering = state.authMode === "register";
-  const needsInvitation = registering && state.info?.registration_mode === "invite";
+  const needsInvitation =
+    registering && state.info?.registration_mode === "invite";
   const active =
     state.job && ["pending", "processing"].includes(state.job.status);
   $("signed-in").hidden = !signedIn;
   $("signed-out").hidden = signedIn;
+  $("account-panel").hidden = signedIn;
   $("account-email").textContent = state.email || "";
   $("login-tab").disabled = state.authBusy;
   $("register-tab").hidden = !canRegister;
@@ -146,13 +148,17 @@ function updateControls() {
   $("register-tab").classList.toggle("selected", registering);
   $("login-tab").setAttribute("aria-pressed", String(!registering));
   $("register-tab").setAttribute("aria-pressed", String(registering));
-  $("password").autocomplete = registering ? "new-password" : "current-password";
+  $("password").autocomplete = registering
+    ? "new-password"
+    : "current-password";
   $("password").minLength = registering ? 8 : 1;
   $("registration-note").textContent =
     {
       open: "Create an account or sign in to your existing account.",
-      invite: "Have an invitation? Create an account with the email and code shared with you.",
-      closed: "New account registration is closed. Existing accounts can still sign in.",
+      invite:
+        "Have an invitation? Create an account with the email and code shared with you.",
+      closed:
+        "New account registration is closed. Existing accounts can still sign in.",
     }[state.info?.registration_mode] ||
     "Sign in below. Account creation is unavailable until the server settings load.";
   $("invitation-field").hidden = !needsInvitation;
@@ -181,10 +187,10 @@ function updateControls() {
   $("separate").textContent = state.busy
     ? "Submitting…"
     : state.accepted
-      ? "Choose another recording"
+      ? "Submitted"
       : state.uploadId
-        ? "Retry submission ↗"
-        : "Separate audio ↗";
+        ? "Retry submission"
+        : "Separate audio";
   $("resume-submit").disabled = !signedIn || state.busy;
   $("history-refresh").hidden = !signedIn;
   $("history-refresh").disabled = jobHistory.loading;
@@ -229,17 +235,27 @@ function renderHistory() {
   }
   const message = $("history-message");
   message.textContent = !state.token
-    ? "Sign in to see your previous sessions."
+    ? "Sign in to see your recordings."
     : jobHistory.error
-      ? `Could not load sessions. ${jobHistory.error}`
+      ? `Could not load recordings. ${jobHistory.error}`
       : jobHistory.loading
-        ? "Loading sessions…"
+        ? "Loading recordings…"
         : jobHistory.loaded && !jobHistory.items.length
-          ? "No sessions yet. Your recordings will appear here after submission."
+          ? "No recordings yet. Submit a WAV to get started."
           : "";
   message.hidden = !message.textContent;
   message.classList.toggle("error", Boolean(jobHistory.error));
+  updateRecordingTitle();
   updateControls();
+}
+
+function updateRecordingTitle() {
+  if (!state.job) return;
+  const item = jobHistory.items.find((item) => item.id === state.job.id);
+  if (item) state.jobName = item.filename;
+  else if (state.uploadId === state.job.upload_id && state.file)
+    state.jobName = state.file.name;
+  $("session-title").textContent = state.jobName || "Recording";
 }
 
 $("history-refresh").addEventListener("click", () => {
@@ -273,7 +289,7 @@ async function jsonRequest(path, { method = "GET", body, auth = true } = {}) {
     if (auth && response.status === 401 && token === state.token) {
       clearSession();
       notice(
-        "Your sign-in expired. Sign in again to find your previous sessions.",
+        "Your sign-in expired. Sign in again to access your recordings.",
         true,
       );
       throw new CancelledOperation();
@@ -345,7 +361,7 @@ $("auth-form").addEventListener("submit", async (event) => {
     storage.set("token", state.token);
     storage.set("email", state.email);
     $("password").value = "";
-    notice("Welcome in. Choose a recording or open a previous session.");
+    notice("");
     jobHistory.load();
   } catch (error) {
     report(error, epoch);
@@ -358,7 +374,7 @@ $("auth-form").addEventListener("submit", async (event) => {
 });
 $("logout").addEventListener("click", () => {
   clearSession();
-  notice("Signed out. Accepted jobs continue processing on the server.");
+  notice("Signed out. Submitted recordings continue processing.");
 });
 $("audio-file").addEventListener("change", () => {
   clearJob();
@@ -367,10 +383,10 @@ $("audio-file").addEventListener("change", () => {
   const file = $("audio-file").files[0];
   state.file = null;
   notice("");
-  $("file-name").textContent = file?.name || "Choose a WAV recording";
+  $("file-name").textContent = file?.name || "Choose a WAV file";
   $("file-detail").textContent = file
     ? `${(file.size / 1024 / 1024).toFixed(1)} MiB · WAV recording`
-    : "Select a song from your computer";
+    : "Select a recording from your computer";
   if (file) {
     if (!file.name.toLowerCase().endsWith(".wav"))
       notice("Please choose a WAV recording.", true);
@@ -448,9 +464,7 @@ $("upload-form").addEventListener("submit", async (event) => {
     state.accepted = true;
     state.jobEpoch += 1;
     showJob(data);
-    notice(
-      "Your session was accepted. You can find it again in Your sessions.",
-    );
+    notice("");
     jobHistory.load();
     schedulePoll();
   } catch (error) {
@@ -467,12 +481,19 @@ $("upload-form").addEventListener("submit", async (event) => {
   }
 });
 function showJob(job) {
+  if (state.job?.id !== job.id) {
+    state.jobName = null;
+    $("upload-disclosure").open = false;
+    $("job-details").open = false;
+  }
   state.job = job;
+  updateRecordingTitle();
   state.savedJob = job.id;
   storage.set("job", job.id);
   $("resume-id").value = job.id;
   $("job-id").textContent = job.id;
-  $("empty-session").hidden = true;
+  $("session-panel").hidden = false;
+  $("upload-title").textContent = "Separate another recording";
   $("active-session").hidden = false;
   $("job-status").hidden = false;
   $("job-status").textContent = job.status;
@@ -481,14 +502,13 @@ function showJob(job) {
   $("processing-indicator").hidden = !active;
   $("job-message").textContent =
     {
-      pending: "Your recording is waiting to be processed.",
+      pending: "Queued. Processing will start when the processor is available.",
       processing:
-        "Separating your recording. You can return to it from Your sessions.",
-      completed:
-        "Your tracks are ready. Preview an instrument or download its WAV file.",
+        "Separating tracks. You can return to this recording from the sidebar.",
+      completed: "Tracks ready. Preview a track or download its WAV file.",
       failed:
-        "This session could not finish. Its job ID is saved above; choose another recording to start a new session.",
-    }[job.status] || "Checking your session…";
+        "Separation failed. You can submit the recording again. The job ID is available under Details.",
+    }[job.status] || "Checking recording status…";
   if (job.status === "completed") renderStems(job.outputs);
   else {
     $("stems").replaceChildren();
@@ -521,7 +541,7 @@ async function pollJob(epoch = state.epoch, jobEpoch = state.jobEpoch) {
 $("refresh-job").addEventListener("click", () => pollJob());
 async function openSession(id) {
   if (!state.token) {
-    notice("Sign in to open a session.", true);
+    notice("Sign in to open a recording.", true);
     return;
   }
   const epoch = state.epoch;
@@ -554,7 +574,7 @@ $("copy-job").addEventListener("click", async () => {
     await navigator.clipboard.writeText(state.job.id);
     notice("Job ID copied.");
   } catch {
-    notice("Select the job ID above and copy it to return to this session.");
+    notice("Select the job ID under Details and copy it manually.");
   }
 });
 async function audioBlob(path, epoch) {
@@ -575,7 +595,7 @@ async function audioBlob(path, epoch) {
   }
   if (!response.ok)
     throw new Error(
-      `Audio is unavailable (${response.status}). Refresh the session and try again.`,
+      `Audio is unavailable (${response.status}). Refresh the recording status and try again.`,
     );
   const blob = await response.blob();
   if (epoch !== state.epoch) throw new CancelledOperation();
@@ -592,10 +612,7 @@ function renderStems(outputs) {
     const name = document.createElement("span");
     name.className = "stem-name";
     name.textContent = stem;
-    const description = document.createElement("span");
-    description.className = "stem-description";
-    description.textContent = descriptions[stem] || "Separated track";
-    label.append(name, description);
+    label.append(name);
     const actions = document.createElement("div");
     actions.className = "stem-actions";
     const preview = document.createElement("button");
@@ -627,7 +644,7 @@ function renderStems(outputs) {
     const download = document.createElement("button");
     download.type = "button";
     download.className = "button secondary download-button";
-    download.textContent = "Download ↓";
+    download.textContent = "Download";
     download.setAttribute("aria-label", `Download ${stem}`);
     download.addEventListener("click", async () => {
       if (state.downloading) return;
@@ -675,15 +692,15 @@ async function initialize() {
     const mode = state.info.processing_mode;
     $("service-status").textContent = {
       local: "Separation ready",
-      queued: "Queued processing",
+      queued: "Separation available",
       disabled: "Playback only",
     }[mode];
     $("mode-note").textContent = {
-      local: "Choose a recording and let the model find its instrument tracks.",
+      local: "Separate a WAV recording into individual instrument tracks.",
       queued:
-        "Submitted recordings wait for an available worker. You can return to your session while processing continues.",
+        "Separate a WAV into instrument tracks. Processing continues if you leave this page.",
       disabled:
-        "New separation is unavailable on this server. Sign in to listen to an existing completed session.",
+        "New separation is unavailable. Sign in to preview or download your saved tracks.",
     }[mode];
     $("upload-limits").textContent =
       `Up to ${Math.floor(state.info.max_upload_bytes / 1024 / 1024)} MiB · ${Math.floor(state.info.max_audio_duration_seconds / 60)} min · mono or stereo`;
