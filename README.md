@@ -5,7 +5,7 @@
 **Turn songs into practice tracks.** Upload a WAV, MP3, M4A, AAC or FLAC recording, separate its
 instruments with BS-RoFormer, then preview or download the tracks in your browser.
 
-IsoJam runs locally with a CPU API and a separate NVIDIA GPU processor. It uses
+IsoJam runs locally with a CPU API, a CPU audio importer and a separate NVIDIA GPU processor. It uses
 Python, FastAPI, SQLAlchemy, SQLite and Docker Compose. Accounts, recordings and
 results persist across container replacements.
 
@@ -81,7 +81,7 @@ docker compose build
 docker compose run --rm models
 ```
 
-The build installs the locked API and GPU dependencies. The model command
+The build installs the locked API, GPU and CPU importer dependencies. The model command
 prepares and verifies assets in a persistent Docker volume; it reuses valid
 cached assets when repeated. The host's native model cache is separate.
 
@@ -91,8 +91,8 @@ cached assets when repeated. The host's native model cache is separate.
 docker compose up --abort-on-container-failure
 ```
 
-Compose applies database migrations, starts the processor, waits for its GPU and
-model-cache checks, then starts the API. Logs remain visible in this terminal.
+Compose applies database migrations, starts the processor and CPU importer, waits
+for their readiness checks, then starts the API. Logs remain visible in this terminal.
 An exited `migrate` service with code 0 is expected.
 
 Open **[http://localhost:8000](http://localhost:8000)**. The port is bound to your
@@ -131,6 +131,10 @@ Press **Ctrl+C once** to stop. Let shutdown finish: the API stops accepting
 requests, and the processor finishes its active cycle before exiting. Pending
 work stays queued for the next startup. Normal shutdown preserves accounts,
 recordings, outputs and cached models.
+
+The importer also finishes its current download/conversion before stopping,
+with a three-minute stop grace. Its [API workflow and recovery behavior](docs/youtube-imports.md)
+are documented separately; the browser URL field is the next integration slice.
 
 From another terminal, these commands also preserve the named volumes:
 
@@ -251,8 +255,8 @@ retention or backup policy.
 Browser access tokens are tab-scoped, expire after 30 minutes and have no refresh
 flow. Preview downloads the whole authenticated WAV before playback. Custom
 backing-track mixing, looping and speed adjustment are not implemented.
-The browser accepts local audio files. A [standalone YouTube importer](docs/youtube-imports.md)
-is available for development; browser URL imports are not connected yet.
+The browser accepts local audio files. A [background YouTube import API](docs/youtube-imports.md)
+and standalone importer are available; browser URL imports are not connected yet.
 
 The queue favors avoiding duplicate execution when a worker's exit is uncertain.
 Automatic inference retry of uncertain attempts is not supported. A successful

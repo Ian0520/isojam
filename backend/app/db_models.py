@@ -1,7 +1,14 @@
 from datetime import datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import CheckConstraint, ForeignKey, String, UniqueConstraint, func
+from sqlalchemy import (
+    CheckConstraint,
+    ForeignKey,
+    Index,
+    String,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from app.db_types import UTCDateTime
@@ -18,6 +25,44 @@ class Upload(Base):
     user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"))
     original_filename: Mapped[str]
     stored_filename: Mapped[str]
+
+
+class AudioImport(Base):
+    __tablename__ = "audio_imports"
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id", "submission_key", name="uq_audio_imports_submission"
+        ),
+        CheckConstraint(
+            "length(video_id) = 11 AND video_id NOT GLOB '*[^A-Za-z0-9_-]*'",
+            name="ck_audio_imports_video_id",
+        ),
+        CheckConstraint(
+            "length(submission_key) BETWEEN 1 AND 128",
+            name="ck_audio_imports_submission_key",
+        ),
+        CheckConstraint(
+            "(status IN ('pending', 'processing') AND upload_id IS NULL "
+            "AND error_code IS NULL) OR "
+            "(status = 'ready' AND upload_id IS NOT NULL AND error_code IS NULL) OR "
+            "(status = 'failed' AND upload_id IS NULL AND error_code IS NOT NULL)",
+            name="ck_audio_imports_result",
+        ),
+        Index("ix_audio_imports_queue", "status", "created_at", "id"),
+        Index("ix_audio_imports_owner", "user_id", "created_at", "id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"))
+    video_id: Mapped[str] = mapped_column(String(11))
+    submission_key: Mapped[str] = mapped_column(String(128))
+    status: Mapped[str] = mapped_column(server_default="pending")
+    upload_id: Mapped[UUID | None] = mapped_column(ForeignKey("uploads.id"))
+    filename: Mapped[str | None]
+    error_code: Mapped[str | None] = mapped_column(String(32))
+    created_at: Mapped[datetime] = mapped_column(
+        UTCDateTime(), server_default=func.current_timestamp()
+    )
 
 
 class Job(Base):

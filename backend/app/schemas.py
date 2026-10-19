@@ -35,6 +35,20 @@ class CreateJobRequest(BaseModel):
     upload_id: UUID
 
 
+class CreateAudioImportRequest(BaseModel):
+    url: str = Field(min_length=1, max_length=2048)
+
+
+class AudioImportResponse(BaseModel):
+    id: UUID
+    video_id: str
+    status: str
+    upload_id: UUID | None
+    filename: str | None
+    error_code: str | None
+    created_at: datetime
+
+
 class JobResponse(BaseModel):
     id: UUID
     status: str

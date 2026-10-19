@@ -8,6 +8,11 @@ migrations and processor; you do not need the native installation below to use i
 
 ## Setup
 
+For YouTube URL imports, see the [background import API and worker](youtube-imports.md).
+The Compose stack includes the separate CPU importer. Native API admission defaults
+to disabled (`ISOJAM_YOUTUBE_IMPORTS_ENABLED=0`); the importer has its own locked
+downloader environment and does not run in the HTTP process.
+
 This section starts the application directly in a Python environment on
 Ubuntu/WSL2. Its environment variables and data are separate from Compose.
 The root `.env` is read by Compose; native Python commands do not load it

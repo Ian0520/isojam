@@ -39,6 +39,7 @@ def test_browser_assets_and_runtime_info_in_each_mode(
             "max_upload_bytes": 1024,
             "max_audio_duration_seconds": 30,
             "max_converted_audio_bytes": 2048,
+            "youtube_imports_enabled": False,
             "audio_upload_types": {
                 ".wav": "audio/wav",
                 ".mp3": "audio/mpeg",

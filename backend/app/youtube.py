@@ -83,7 +83,12 @@ def youtube_video_id(url: str) -> str:
 
 
 def _run_download(
-    video_id: str, directory: Path, *, max_bytes: int, max_duration_seconds: int
+    video_id: str,
+    directory: Path,
+    *,
+    max_bytes: int,
+    max_duration_seconds: int,
+    lock_fd: int | None = None,
 ) -> dict:
     command = [
         sys.executable,
@@ -100,7 +105,12 @@ def _run_download(
         stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL,
         start_new_session=True,
-        env=os.environ | {"DENO_DIR": str(directory / "deno-cache")},
+        pass_fds=() if lock_fd is None else (lock_fd,),
+        env=os.environ
+        | {
+            "DENO_DIR": str(directory / "deno-cache"),
+            "ISOJAM_DOWNLOAD_PARENT_PID": str(os.getpid()),
+        },
     )
     try:
         try:
@@ -151,6 +161,7 @@ def import_youtube_audio(
     max_download_bytes: int,
     max_duration_seconds: int,
     max_converted_bytes: int,
+    lock_fd: int | None = None,
 ) -> ImportedAudio:
     video_id = youtube_video_id(url)
     if sys.platform != "linux":
@@ -164,11 +175,13 @@ def import_youtube_audio(
     output_dir.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix=".youtube-", dir=output_dir) as temporary:
         directory = Path(temporary)
+        download_options = {} if lock_fd is None else {"lock_fd": lock_fd}
         result = _run_download(
             video_id,
             directory,
             max_bytes=max_download_bytes,
             max_duration_seconds=max_duration_seconds,
+            **download_options,
         )
         sources = [
             p for p in directory.iterdir() if p.name in {"source.m4a", "source.webm"}

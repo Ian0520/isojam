@@ -83,6 +83,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--api-image", default="isojam-api:local-stack")
     parser.add_argument("--processor-image", default="isojam-processor:local-stack")
+    parser.add_argument("--import-image", default="isojam-youtube:local-stack")
     parser.add_argument(
         "--audio-format",
         choices=["wav", "mp3"],
@@ -103,6 +104,7 @@ def main():
             f"ISOJAM_JWT_SECRET_KEY={secrets.token_hex(32)}\n"
             "ISOJAM_PORT=0\nISOJAM_REGISTRATION_MODE=open\n"
             f"ISOJAM_API_IMAGE={args.api_image}\nISOJAM_PROCESSOR_IMAGE={args.processor_image}\n"
+            f"ISOJAM_IMPORT_IMAGE={args.import_image}\n"
         )
         settings.chmod(0o600)
         override = root / "override.yaml"

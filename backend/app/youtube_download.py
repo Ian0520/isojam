@@ -2,18 +2,48 @@
 
 import json
 import math
+import os
 import re
 import resource
 import shutil
+import signal
 import sys
+import threading
+import time
 from functools import partial
 from pathlib import Path
 from urllib.parse import urlsplit
+
+from app.youtube_network import install_network_guard
 
 
 class DownloadRejected(Exception):
     def __init__(self, code):
         self.code = code
+
+
+def watch_parent() -> None:
+    """Stop this private process group if its supervising importer is killed.
+
+    The normal parent enforces the wall-clock timeout. This independent watcher
+    also stops downloader/Deno children when that parent cannot run its finally
+    block, so they cannot keep downloading or recreate cleaned work directories.
+    """
+    value = os.environ.get("ISOJAM_DOWNLOAD_PARENT_PID")
+    if value is None:
+        return
+    parent_pid = int(value)
+    group = os.getpid()
+    if parent_pid <= 0 or os.getpgrp() != group:
+        raise RuntimeError("Downloader requires its own supervised process group")
+
+    def monitor():
+        while True:
+            if os.getppid() != parent_pid:
+                os.killpg(group, signal.SIGKILL)
+            time.sleep(0.1)
+
+    threading.Thread(target=monitor, daemon=True).start()
 
 
 def check_video(info, *, video_id, max_duration_seconds, incomplete=False):
@@ -158,9 +188,11 @@ def download(video_id, directory, *, max_bytes, max_duration_seconds):
 def main():
     video_id, directory, max_bytes, max_duration = sys.argv[1:]
     try:
+        watch_parent()
         max_bytes = int(max_bytes)
         # Enforced by the kernel even if size metadata/progress reporting is wrong.
         resource.setrlimit(resource.RLIMIT_FSIZE, (max_bytes, max_bytes))
+        install_network_guard()
         result = download(
             video_id,
             Path(directory),

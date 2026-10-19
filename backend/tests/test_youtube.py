@@ -1,4 +1,6 @@
 import json
+import os
+import signal
 import subprocess
 import sys
 import time
@@ -216,3 +218,68 @@ def test_downloader_failures_have_stable_errors(tmp_path, monkeypatch, response)
         youtube._run_download(
             VIDEO_ID, tmp_path, max_bytes=100000, max_duration_seconds=1
         )
+
+
+def test_downloader_and_descendant_stop_when_supervising_importer_is_killed(tmp_path):
+    child_source = """
+import subprocess, sys, time
+from pathlib import Path
+from app import youtube_download as child
+def slow_download(video_id, directory, **limits):
+    descendant = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])
+    (directory / 'descendant.pid').write_text(str(descendant.pid))
+    (directory / 'downloader.pid').write_text(str(__import__('os').getpid()))
+    time.sleep(60)
+child.download = slow_download
+raise SystemExit(child.main())
+"""
+    parent_source = f"""
+import subprocess, sys
+from pathlib import Path
+from app import youtube
+from app.import_worker import worker_lock
+original = subprocess.Popen
+def launch(command, **kwargs):
+    return original([sys.executable, '-c', {child_source!r}, *command[3:]], **kwargs)
+youtube.subprocess.Popen = launch
+directory = Path(sys.argv[1])
+with worker_lock(directory / 'locks') as lock_fd:
+    youtube._run_download('{VIDEO_ID}', directory, max_bytes=100000,
+                          max_duration_seconds=1, lock_fd=lock_fd)
+"""
+    parent = subprocess.Popen([sys.executable, "-c", parent_source, str(tmp_path)])
+    pids = []
+    try:
+        deadline = time.monotonic() + 10
+        while not (tmp_path / "downloader.pid").exists():
+            assert parent.poll() is None
+            assert time.monotonic() < deadline
+            time.sleep(0.01)
+        pids = [
+            int((tmp_path / name).read_text())
+            for name in ("downloader.pid", "descendant.pid")
+        ]
+        parent.kill()
+        parent.wait(timeout=5)
+        deadline = time.monotonic() + 3
+        for pid in pids:
+            while time.monotonic() < deadline:
+                path = Path(f"/proc/{pid}/stat")
+                if not path.exists() or path.read_text().split()[2] == "Z":
+                    break
+                time.sleep(0.01)
+            else:
+                pytest.fail("Downloader process survived supervisor death")
+        from app.import_worker import worker_lock
+
+        with worker_lock(tmp_path / "locks"):
+            pass
+    finally:
+        if parent.poll() is None:
+            parent.kill()
+            parent.wait(timeout=5)
+        # Only the dedicated test downloader group can own this PID here.
+        if pids:
+            path = Path(f"/proc/{pids[0]}/stat")
+            if path.exists() and path.read_text().split()[2] != "Z":
+                os.killpg(pids[0], signal.SIGKILL)
