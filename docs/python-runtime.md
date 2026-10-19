@@ -54,8 +54,10 @@ a separate build environment with newly selected build packages. The project
 source comes from the checked-out Git revision; it is not hashed by the package
 requirements file. The initial pip bootstrap is version-pinned separately.
 
-Configure persistent paths and authentication as described in the README, set
-disabled processing, migrate, and start the server:
+Configure persistent paths and authentication as described in the
+[native configuration guide](configuration.md#setup), set disabled processing,
+migrate, and start the server. Compose's root `.env` is not loaded by these
+native commands:
 
 ```bash
 export ISOJAM_PROCESSING_MODE=disabled

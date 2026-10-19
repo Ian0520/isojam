@@ -3,105 +3,225 @@
 [![Backend CI](https://github.com/Ian0520/isojam/actions/workflows/backend.yml/badge.svg)](https://github.com/Ian0520/isojam/actions/workflows/backend.yml)
 
 **Turn songs into practice tracks.** Upload a WAV recording, separate its
-instruments with BS-RoFormer, then preview or download the stems in a browser.
+instruments with BS-RoFormer, then preview or download the tracks in your browser.
 
-IsoJam is a backend-focused personal project built with Python, FastAPI,
-SQLAlchemy, SQLite and a pretrained audio model. It includes a working local GPU
-demo and a separate queued worker with durable execution and publication records.
+IsoJam runs locally with a CPU API and a separate NVIDIA GPU processor. It uses
+Python, FastAPI, SQLAlchemy, SQLite and Docker Compose. Accounts, recordings and
+results persist across container replacements.
 
-![IsoJam browser studio after real GPU separation](docs/screenshots/studio.png)
+![IsoJam workspace with recent recordings and separated tracks](docs/screenshots/workspace.png)
 
-[Watch the 14-second local demo](docs/demo/real-separation.webm) ·
-[Demo and verification evidence](docs/demo.md) ·
-[Setup and API guide](docs/configuration.md) ·
-[Container guide](docs/containers.md) ·
-[Local GPU stack](docs/local-stack.md)
+Current interface with synthetic preview data. See the
+[recorded real-GPU demo and verification evidence](docs/demo.md) for processing
+checks; the recording shows an earlier interface.
 
-## What works
+## Start locally with Docker Compose
 
-- Account registration with open, closed and invitation-only modes, Argon2 password hashing and JWT login.
-- Authenticated WAV uploads with request, file-size, duration and decoded-audio validation.
-- Ownership checks on uploads, jobs and stem downloads.
-- Owner-scoped job-history API with cursor pagination and original filenames.
-- Browser history with recent sessions, refresh, pagination and one-click reopening.
-- Browser submission, status polling, session restoration by job ID, playback and downloads.
-- Seven outputs: vocals, drums, bass, guitar, piano, other and instrumental.
-- Persistent metadata with Alembic migrations, per-user unfinished-job limits and idempotent job submission.
-- A non-root CPU API container with hash-locked dependencies and persistent storage.
-- A separate GPU processor image and Compose stack for local startup, draining shutdown and persistent data/model volumes.
-- A separate queued real-model worker with execution authorization, heartbeats, verified result bundles, atomic publication and restart reconciliation.
-- An explicit fake worker for CPU-only coordination and container checks.
-- GitHub Actions covering lint, formatting, tests, container packaging and interrupted-publication recovery.
+This is the recommended setup for personal use. All commands below run in a
+Linux terminal, or **Ubuntu/WSL2 on Windows**, from the repository root.
+The application and inference dependencies run inside containers; no host Python
+virtual environment is required. Host `python3` is used only to generate a secret.
 
-## Two processing paths
+### 1. Check prerequisites
 
-| Path | Purpose | Execution and recovery |
-| --- | --- | --- |
-| `local` | Real source separation in the browser | Loads the GPU model once; runs FastAPI background tasks. Interrupted inference is not resumed after restart. |
-| `queued` | Separate worker execution | A continuous Linux dispatcher runs the real model with `local-model`, or test WAVs with explicit `local-fake`. Saved results can be published after confirmed exit without repeating inference. |
-| `disabled` | CPU API and existing-result access | Authentication, uploads, status and downloads work; new jobs return 503. |
+You need a Linux x86_64 Docker engine, Docker Compose with GPU support, and a
+compatible NVIDIA GPU/host driver. The GPU image supplies PyTorch and CUDA user
+libraries; the host supplies the driver. The current lock targets CUDA 13.0.
+The [local stack guide](docs/local-stack.md#host-requirements) explains the runtime
+requirements and the hardware used for verification.
 
-The CPU Docker image defaults to `disabled` and does **not** contain the model.
-Real queued inference runs in the existing CUDA environment or the separate
-[GPU processor container](docs/local-stack.md) on the SQLite host.
-See [Real model worker](docs/model-worker.md). An unknown worker exit keeps its
-queue slot occupied; an old heartbeat alone is not enough to authorize replacement.
-
-With matching database/audio settings and the API in queued mode, start its worker
-from the activated inference environment:
+On Windows, start Docker Desktop with its WSL2 backend and Ubuntu integration.
+Keep Docker Desktop running, open Ubuntu, and check:
 
 ```bash
-python -m app.dispatcher --serve --adapter local-model
+docker version
+docker compose version
 ```
 
-Use `--once` for a single cycle. SIGTERM or Ctrl+C stops the continuous dispatcher
-after its active cycle finishes. An example supervised service and the disposable
-real GPU restart/interruption smoke are documented in the worker guide.
+`docker version` must show both **Client** and **Server**. Allow space for the
+large GPU image, build cache, model checkpoint and generated WAV files. Under
+WSL, check free space on the Windows drive as well as inside Linux:
+
+```bash
+df -h / /mnt/c
+```
+
+For a new checkout:
+
+```bash
+git clone https://github.com/Ian0520/isojam.git
+cd isojam
+```
+
+If you already have the repository, use that checkout instead. Keep the remaining
+commands in the directory containing `compose.yaml`.
+
+### 2. Configure local settings once
+
+```bash
+cp -n .env.example .env
+python3 -c "import secrets; print(secrets.token_hex(32))"
+```
+
+Open `.env` in an editor, for example `nano .env`, and paste the generated value
+after `ISOJAM_JWT_SECRET_KEY=`. In nano, save with Ctrl+O, Enter, then exit with
+Ctrl+X. Keep this secret stable across restarts. The copy command preserves an
+existing `.env`; do not replace an existing secret as part of daily startup.
+Git ignores `.env`.
+
+The example explicitly sets `ISOJAM_REGISTRATION_MODE=open` so you can create
+your local account. No invitation is needed. The application default is `closed`;
+see [registration configuration](docs/configuration.md#configure-registration)
+for closed and invitation-only operation.
+
+### 3. Build images and prepare the model once
+
+```bash
+docker compose build
+docker compose run --rm models
+```
+
+The build installs the locked API and GPU dependencies. The model command
+prepares and verifies assets in a persistent Docker volume; it reuses valid
+cached assets when repeated. The host's native model cache is separate.
+
+### 4. Start IsoJam
+
+```bash
+docker compose up --abort-on-container-failure
+```
+
+Compose applies database migrations, starts the processor, waits for its GPU and
+model-cache checks, then starts the API. Logs remain visible in this terminal.
+An exited `migrate` service with code 0 is expected.
+
+Open **[http://localhost:8000](http://localhost:8000)**. The port is bound to your
+own machine. API documentation is at [http://localhost:8000/docs](http://localhost:8000/docs).
+If you changed `ISOJAM_PORT` in `.env`, use that port instead.
+
+### 5. Create an account and try a recording
+
+1. Select **Create account**, enter your email and password, then submit.
+   Successful registration signs you in automatically. If automatic sign-in
+   fails after account creation, use **Sign in** with those credentials.
+2. Choose a short WAV and select **Separate audio**. Defaults allow up to
+   200 MiB and 10 minutes of readable mono or stereo audio.
+3. The upload form collapses and the recording moves through queued/processing
+   to completed. The model loads in the processor's worker for each job.
+4. Use **Preview** to listen to an individual track or **Download** to save its
+   WAV. Outputs are vocals, drums, bass, guitar, piano, other and instrumental.
+5. Reopen previous work from **Recent recordings**. **Load more** retrieves the
+   next history page; **Refresh** returns to the newest page. **Details** contains
+   the job ID, and **Find by job ID** opens an owned recording directly.
+
+This Compose stack uses its own data volume. It does not import accounts or
+recordings from an earlier native Python environment or a manual Docker exercise.
+
+## Daily startup, shutdown and updates
+
+After the one-time setup, start from the repository root:
+
+```bash
+docker compose up --abort-on-container-failure
+```
+
+Press **Ctrl+C once** to stop. Let shutdown finish: the API stops accepting
+requests, and the processor finishes its active cycle before exiting. Pending
+work stays queued for the next startup. Normal shutdown preserves accounts,
+recordings, outputs and cached models.
+
+From another terminal, these commands also preserve the named volumes:
+
+```bash
+# Stop and keep the containers.
+docker compose stop
+
+# Or stop and remove containers and the network.
+docker compose down
+```
+
+After changing source code or updating the checkout, stop first, then rebuild:
+
+```bash
+docker compose stop
+docker compose up --build --abort-on-container-failure
+```
+
+This also gives a future migration exclusive access while services are stopped.
+Changing `.env` requires container recreation; starting an old container alone
+does not apply new settings or source. The [local stack guide](docs/local-stack.md)
+covers background startup, storage, graceful shutdown and model maintenance.
+
+`docker compose down --volumes` **deletes the database, recordings, outputs and
+cached model assets**. Use ordinary `stop` or `down` for daily operation.
+Persistent volumes survive replacements, but there is no automatic backup policy.
+
+## Troubleshooting
+
+Start with:
+
+```bash
+docker compose ps -a
+docker compose logs --tail 100 migrate processor api
+```
+
+| Symptom | Next step |
+| --- | --- |
+| Docker is missing or cannot connect to the engine | Start Docker Desktop and check Ubuntu WSL integration; `docker version` must report a server. |
+| Compose asks for a JWT secret | Complete the `.env` setup above. Keep its value stable. |
+| Processor reports missing model files | Stop the stack, run `docker compose run --rm models`, then start again. |
+| Processor cannot access CUDA | Check Docker GPU access and the host NVIDIA driver; installing Python packages on the host does not fix container GPU access. |
+| Port 8000 is already allocated | Stop the other service, or change `ISOJAM_PORT` in `.env` and recreate the containers. |
+| Create account is unavailable | Check the registration mode. Set it to `open` for local signup, recreate the API, and reload the page. |
+| A recording remains queued | Inspect processor logs and the current attempt. Do not force retries of uncertain execution. |
+| Sign-in expired | Sign in again and reopen the recording from history. Tokens expire after 30 minutes. |
+| Page looks outdated or reports a missing element | Rebuild after source changes, then reload. Ctrl+Shift+R clears older cached assets from before the cache-policy fix. |
+
+See [operations and troubleshooting](docs/operations.md) for upload failures,
+queue recovery, storage and diagnostic commands.
+
+## How it works
 
 ```mermaid
 flowchart LR
-    Browser[Browser studio] --> API[FastAPI: auth and ownership]
-    API --> DB[(SQLite metadata)]
-    API --> Uploads[Local audio storage]
-    API -->|local mode| Model[BS-RoFormer GPU session]
-    Model --> Stems[Real stems]
-    Stems --> Uploads
-    DB -->|queued mode| Dispatcher[Separate dispatcher]
-    Dispatcher --> Worker[Real model or explicit fake worker]
-    Worker --> Bundle[Verified result bundle]
-    Bundle --> Publish[Atomic publication / recovery]
-    Publish --> DB
+    Browser[Browser] --> API[CPU API]
+    API --> DB[(SQLite: accounts, uploads, jobs)]
+    API --> Audio[Shared audio storage]
+    Dispatcher[GPU processor: dispatcher] --> DB
+    Dispatcher --> Worker[Model worker child]
+    Audio --> Worker
+    Worker --> Bundle[Verified output bundle]
+    Bundle --> Dispatcher
+    Dispatcher -->|publish after confirmed worker exit| DB
+    API -->|owned previews and downloads| Browser
 ```
 
-## Try the local GPU demo
+The API accepts durable queued jobs without loading the model. The dispatcher
+runs one attempt at a time on this host. Execution permission, heartbeats and
+confirmed worker exit distinguish running, stopped and uncertain work. The
+processor verifies all seven saved outputs before publishing completion and
+output records in one database transaction. Saved results can be published after
+a restart without repeating inference when the required stop proof is available.
+See the [worker guide](docs/model-worker.md) for recovery boundaries.
 
-For the containerized API and GPU processor, follow the
-[local Compose setup](docs/local-stack.md#first-setup). After building both images
-and preparing model assets, `docker compose up --abort-on-container-failure`
-starts the stack; Ctrl+C drains its active job and preserves the volumes.
+Accounts use Argon2 password hashing and JWT access tokens. Uploads and downloads
+are owner-scoped. Submission receipts support idempotent retries, and upload,
+audio-duration and per-user unfinished-job limits bound admission.
 
-Use Ubuntu/WSL2, Python 3.12 and the existing CUDA inference environment.
-Follow the [setup guide](docs/configuration.md#setup) to install the inference
-extra, configure a signing secret and apply migrations. Then, from `backend`:
+## Alternative development setups
 
-```bash
-source .venv/bin/activate
-export ISOJAM_PROCESSING_MODE=local
-export ISOJAM_REGISTRATION_MODE=open
-uvicorn app.main:app --host 127.0.0.1 --port 8000
-```
+The Compose workflow above selects `queued` mode and starts its processor for
+you. Other setups are available for development and focused exercises:
 
-Open [http://127.0.0.1:8000/](http://127.0.0.1:8000/), create an account, choose a
-short WAV and select **Separate audio**. Return to previous work through **Your
-sessions**; saved job IDs also work through the expandable lookup. API documentation
-is at `/docs`. See the [demo guide](docs/demo.md) for
-prerequisites and the tested workflow.
+| Mode | Use | Setup |
+| --- | --- | --- |
+| `queued` | Separate API and same-host real model dispatcher; also the Compose default. | [Compose](docs/local-stack.md) or [native worker](docs/model-worker.md). |
+| `local` | Native Python API with an in-process model session and background tasks. Interrupted inference is not resumed after restart. | [Native Python setup](docs/configuration.md#setup). |
+| `disabled` | CPU API, authentication, uploads and existing-result access. New separation requests return 503. | [Manual CPU container](docs/containers.md). |
 
-Registration defaults to `closed`. The demo explicitly opens it for account
-creation; set it back to `closed` and restart to stop new signups while existing
-accounts can still log in. Set `invite` to require an email-bound code through
-the browser's **Create account** form or the API. See the
-[registration policy](docs/configuration.md#configure-registration).
+The standalone CPU image defaults to `disabled`. Compose explicitly overrides it
+to `queued`. Real queued work uses `local-model`; `local-fake` generates dummy
+WAVs only for coordination tests. Queued mode itself does not imply fake audio.
 
 ## Verify without a GPU
 
@@ -110,41 +230,40 @@ With a running Linux Docker engine, from the repository root:
 ```bash
 docker build --platform linux/amd64 -t isojam-api:ci backend
 python3 backend/scripts/check_container.py --image isojam-api:ci
-python3 backend/scripts/smoke_container.py --image isojam-api:ci
-python3 backend/scripts/smoke_container.py --image isojam-api:ci --processing-mode queued --dispatch-fake-worker --recover-publication
 ```
 
-The checks use disposable databases, audio directories and Docker resources.
-They test the installed CPU image and preserve existing project data. These
-checks use fake model sessions; the real GPU browser flow is validated separately.
-
-See [CI](docs/ci.md) for workflow details and [containers](docs/containers.md) for
-manual operation with your own persistent volume.
+This checks lint, formatting and the Python suite with locked tools in a
+disposable container as the runtime user. GitHub Actions also checks browser
+JavaScript and runs authentication/history tests and HTTP/container lifecycle
+smokes. The [CI guide](docs/ci.md#run-the-same-checks-locally) lists the complete
+commands. CPU checks use explicit test workers; real GPU verification is recorded
+separately in the [local stack guide](docs/local-stack.md#verification-recorded-on-2026-10-18).
 
 ## Scope and limitations
 
-This is a working local demo and tested backend, not a public hosted service.
-Metadata is SQLite and audio is local storage. The browser uses tab-scoped access
-tokens, which expire after 30 minutes; refresh tokens are not implemented.
-Preview fetches a whole authenticated WAV before playing it.
+This version runs on one local Linux/WSL host with an NVIDIA GPU, shared SQLite
+and local audio storage. It is not publicly hosted. Remote GPU control/storage,
+MySQL and Redis integration remain future work. There is no automatic audio
+retention or backup policy.
 
-Local inference has no global GPU scheduling limit or restart recovery. The
-queued path uses one global slot with continuous polling or explicit cycles. Known
-nonzero exits without a manifest can be finalized as failed; uncertain execution
-and damaged saved manifests require inspection. AWS hosting, remote GPU execution, MySQL and Redis
-integration remain future work. Custom backing-track mixing and speed adjustment
-are not yet implemented.
+Browser access tokens are tab-scoped, expire after 30 minutes and have no refresh
+flow. Preview downloads the whole authenticated WAV before playback. Custom
+backing-track mixing, looping and speed adjustment are not implemented.
 
-## Explore the project
+The queue favors avoiding duplicate execution when a worker's exit is uncertain.
+Automatic inference retry of uncertain attempts is not supported. A successful
+health response proves HTTP availability, not that a job can finish.
 
-- [Configuration and API reference](docs/configuration.md)
+## Further reading
+
+- [Local stack operation and model cache](docs/local-stack.md)
+- [Configuration and API reference; alternative native setup](docs/configuration.md)
 - [Registration invitations](docs/invitations.md)
-- [Docker operation and smoke tests](docs/containers.md)
-- [Continuous integration](docs/ci.md)
-- [Demo recording and measured evidence](docs/demo.md)
 - [Operations and troubleshooting](docs/operations.md)
+- [Current interface, recorded demo and verification evidence](docs/demo.md)
+- [Continuous integration](docs/ci.md)
+- [Manual CPU container exercise](docs/containers.md)
+- [Worker design](docs/worker-design.md) and [real model worker](docs/model-worker.md)
 - [Design notes and tradeoffs](docs/design-notes.md)
-- [Worker design](docs/worker-design.md)
-- [Real queued model worker](docs/model-worker.md)
 - [Original model compatibility spike](docs/model-spike.md)
 - [Product direction](docs/project-scope.md)

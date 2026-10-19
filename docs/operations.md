@@ -1,89 +1,142 @@
 # Operations and troubleshooting
 
-These notes cover the current single-host CPU API container and local GPU demo.
-For manual CPU container operation, use [containers.md](containers.md). For the
-API/GPU Compose stack, use [local-stack.md](local-stack.md). Do not
-apply destructive experiments to a volume holding data you want to keep.
+These notes use the recommended [local Compose stack](local-stack.md). Start
+with the [README quickstart](../README.md#start-locally-with-docker-compose) for
+installation and account creation. The [standalone CPU container guide](containers.md)
+is a separate exercise with different container names and storage.
 
-## Check the running CPU API
+## Inspect the local Compose stack
 
-Use the container name and port selected when starting your own server. The
-examples below match the manual container guide, not disposable smoke names.
+From the repository root, with Docker running:
 
 ```bash
+docker compose ps -a
+docker compose logs --tail 100 migrate processor api
 curl --fail http://127.0.0.1:8000/health
-docker ps --filter name=isojam-api
-docker logs --tail 100 isojam-api
-docker stats --no-stream isojam-api
-docker exec isojam-api id
-docker volume inspect isojam-data
 ```
 
-`/health` means the application started and can answer HTTP. It does not prove a
-worker is running, the GPU is healthy, or a job will finish. Check a known job's
-status and authenticated output access for those flows. Inspect logs locally;
-avoid sharing signing secrets, passwords, tokens or users' recordings.
+Use the port configured by `ISOJAM_PORT` if it differs from 8000. A successful
+`migrate` container exits with code 0; the API and processor should remain running
+and become healthy. For live logs or a resource snapshot:
 
-`docker stats` reports this container's current resources. Record workload,
-mode, input duration and cold/warm state alongside measurements. The measured
-GPU demo in [demo.md](demo.md) runs outside this CPU container, so its memory
-numbers cannot be used to estimate the CPU image's requirements.
+```bash
+docker compose logs --follow api processor
+docker compose stats --no-stream api processor
+```
 
-## Replace a container without losing data
+`/health` proves that the API can answer HTTP. It does not establish that a worker
+is running, CUDA is usable, or a particular job will finish. The processor's
+startup preflight checks GPU access and cached assets, and its lightweight health
+probe checks dispatcher liveness. Neither measures successful inference or queue
+throughput. Check an actual recording and its owned outputs for the whole flow.
 
-Application source is packaged into the image. Build a new tagged image, then
-create a new container with the same named volume and runtime settings. Starting
-the old container runs its old image. Removing a container does not remove an
-explicitly named volume; data in its writable layer has no such protection.
+Container memory figures are not GPU VRAM usage. Record the workload, mode,
+input duration and cold/warm state alongside measurements. The historical native
+GPU measurement in [demo.md](demo.md#one-measured-local-run) includes a model in
+the API process and cannot size the separate CPU container.
 
-Before a release, save a consistent copy of both SQLite metadata and audio. Stop
-all writers, including the API and dispatcher, before copying database files and
-recordings. A live file copy can miss an active SQLite journal or WAL. A volume
-is persistent storage, **not a backup**. Recovery requires a tested restore copy.
+Inspect logs locally before sharing them; keep signing secrets, passwords,
+tokens and personal recordings out of incident reports.
 
-Apply Alembic migrations as a deliberate one-off operation using the same volume,
-paths and settings as the API, then start the new server and verify health plus
-an existing result. The [container guide](containers.md) has the exact commands.
-A previous image tag is useful for application rollback, but an older application
-may not understand a newer schema. Plan compatible migrations and restore options;
-changing an image alone does not undo data migrations.
+## Stop and replace services
+
+For a normal stop, press Ctrl+C once in the foreground Compose terminal, or run
+`docker compose stop` from another terminal. Wait for the active cycle to drain.
+The API stops first; the processor gets up to 35 minutes to finish its default
+30-minute worker deadline and publication. A second Ctrl+C or forced kill can
+interrupt inference and leave an attempt needing inspection.
+
+After updating source, stop the existing services before applying a new build:
+
+```bash
+docker compose stop
+docker compose up --build --abort-on-container-failure
+```
+
+The stack applies migrations before starting the processor and API. Stopping
+first prevents a future migration from running while old services still write.
+Named data/model volumes and the same `.env` preserve accounts, recording paths,
+results and cached assets. Restarting an old container uses its old image;
+configuration changes require recreation with the updated Compose environment.
+
+`docker compose down` removes containers and the network while keeping named
+volumes. Adding `--volumes` deletes the database, recordings, outputs and cached
+models. Changing the Compose project name also selects a separate set of volumes.
+Do not use either as a way to fix startup failures involving personal data.
+
+For manual `docker run` replacements, follow the separate
+[CPU container instructions](containers.md) and retain that exercise's named
+volume, paths and runtime settings.
+
+## Data and backups
+
+A persistent volume is not a backup. No automated retention, backup or restore
+procedure is implemented. Before a migration or other data operation, preserve a
+consistent copy of SQLite metadata and audio, and verify the restore separately.
+Stop all writers, including API and processor, before copying database files and
+recordings. A live copy can omit an active SQLite journal or WAL.
+
+An old image can help roll back application code, but it may not understand a
+newer schema. Changing an image does not undo migrations. Plan schema compatibility
+and data restore together. Invocation logs and audio inside the data volume do
+not rotate automatically; Docker stdout/stderr logs rotate separately.
 
 ## Diagnose common problems
 
 | Symptom | Check and next action |
 | --- | --- |
-| Docker commands only show a client | Start Docker Desktop, use Linux containers and enable the Ubuntu WSL integration. |
-| Startup fails before serving HTTP | Read logs for missing/blank JWT secret, invalid paths or limits, or un-applied migrations. Keep the same signing secret across replacements. |
-| Local startup cannot load the model | Confirm the inference extra is installed in the active environment, CUDA is available, and the GPU environment matches the model spike. The CPU image deliberately has no model. |
-| New jobs return 503 | Check `ISOJAM_PROCESSING_MODE`. The CPU image defaults to `disabled`; local mode or queued mode with a CUDA worker can provide real separation. |
-| Browser says Queued processing | Run an explicit `local-model` dispatcher cycle on the same Linux host with matching database, audio storage and limits. `local-fake` is only for test artifacts. |
-| Real model worker fails | Inspect `worker-logs/<invocation>-<launch>.log` inside audio storage. Check CUDA, cached model assets and inference dependencies. A confirmed nonzero exit without a manifest becomes failed; no automatic inference retry occurs. |
-| Upload returns 413 / 422 | Check byte/duration limits or readable mono/stereo WAV content. Renaming a file is insufficient; the server decodes and validates it. |
-| Browser sign-in expires | Log in again and select the job from Your sessions, or use the saved-ID lookup. Access tokens expire after 30 minutes; there is no refresh-token flow. |
-| Account creation returns 403 | Registration defaults to `closed`. For local account creation, explicitly set `ISOJAM_REGISTRATION_MODE=open` and restart or replace the API. Existing accounts can still log in while registration is closed. |
-| Job submission returns 429 | The user has reached the configured unfinished-job allowance. Inspect existing jobs before creating more work. |
-| Another account receives 404 | Ownership checks intentionally hide the resource. Use the owning account; do not weaken the check. |
-| Pending queued job never starts | A cycle may not have run, or the single global attempt slot is occupied. Inspect the dispatcher JSON result. |
-| Dispatcher stops when its terminal closes | Run `--serve` under a supervisor; see the example unit in the worker guide. Restarting the API does not start the dispatcher. |
-| Dispatcher is stopping during inference | SIGTERM/SIGINT drains the active cycle. Its default worker timeout is 30 minutes; the supervisor must allow time for that plus cleanup/publication. |
-| An old reservation blocks the queue after controller restart | Polling can reclaim an expired owned `reserved` attempt with a new generation. `submitting` and later states remain held until there is reliable execution evidence. |
-| Stopped fake worker has saved outputs but job is still processing | Run `python -m app.dispatcher --once --adapter local-fake --reconcile-only` with matching storage/database settings. Valid saved stop proof and the entire verified bundle are required. |
-| Dispatcher reports `database_busy` | Another SQLite writer held the bounded lock wait. Diagnose the writer and retry the cycle; this is not permission to launch another worker. |
-| Exit is unknown or bundle is invalid | Keep the attempt occupied and inspect evidence. Heartbeat age, timeout, file presence or a duplicate child's exit cannot safely authorize replacement. |
-| Local inference was interrupted | Local FastAPI background work is not recovered. Preserve the job as evidence; restarting the API does not resume it. The queued worker can reconcile saved stop evidence and results, but cannot infer missing stop proof. |
+| `docker` is missing in Ubuntu, or only Client information appears | Start Docker Desktop, use Linux containers, enable Ubuntu WSL integration, then retry `docker version` from Ubuntu. |
+| Compose refuses a missing JWT secret | Copy `.env.example` only if needed and set a generated secret in root `.env`. Do not replace an existing secret during routine startup. |
+| Startup fails before HTTP is available | Read `migrate`, `processor` and `api` logs. Fix the first failed dependency; later services may be correctly waiting for it. |
+| Migrations exited with code 0 | This is expected. The oneshot service finishes before processor/API startup. |
+| Port 8000 is already allocated | Stop the old service or set a free `ISOJAM_PORT` in `.env`, recreate the stack, and open that port in the browser. |
+| Build fails with disk-space errors | Check `df -h / /mnt/c` in WSL. Linux virtual capacity alone can hide a full Windows host drive. Preserve volumes and recordings when reclaiming space. |
+| Processor reports absent or invalid cached model files | Stop the stack and run `docker compose run --rm models` to prepare and verify the cache. Inspect any remaining hash-mismatch error before restarting. Normal processor startup never downloads assets. |
+| Processor cannot access CUDA | Check Docker GPU support and the NVIDIA host driver against the locked CUDA runtime. The CPU API image contains no model; native Python installs do not alter the GPU container. |
+| New jobs return 503 | Check the processing mode. The standalone CPU image defaults to `disabled`; Compose explicitly uses `queued` and starts a processor. Native setup needs its own model/dispatcher configuration. |
+| API reports separation availability but jobs stay queued | That label reflects API mode, not live GPU readiness. Check processor health/logs. The single global slot may be held by an unfinished or uncertain attempt; do not start competing workers to bypass it. |
+| Real model worker fails | Inspect the invocation log under `worker-logs` in audio storage. Check CUDA, cached assets and input characteristics. A confirmed nonzero exit without a manifest becomes failed; inference is not automatically retried. |
+| Upload returns 413 / 422 | Check byte/duration limits and decoded mono/stereo WAV content. Renaming a file does not make it valid audio. |
+| Browser sign-in expires | Sign in again and reopen the recording from **Recent recordings** or **Find by job ID**. Tokens expire after 30 minutes; there is no refresh-token flow. |
+| Create account is hidden or registration returns 403 | Check `ISOJAM_REGISTRATION_MODE`. For local signup use `open`, recreate the API, then reload. In `invite` mode, use a valid code for the exact invited email. Closing registration preserves existing accounts and login. |
+| Submission returns 429 | The account reached its unfinished-job allowance. Inspect pending/processing work before submitting more. |
+| Another account receives 404 | Ownership checks intentionally hide resources. Use the owning account. |
+| Native dispatcher stops when its terminal closes | Use `--serve` under a supervisor as described in the worker guide. Compose already supervises its dispatcher inside `processor`; its containers deliberately have no automatic restart policy. |
+| Shutdown takes time during inference | SIGTERM/SIGINT drains the active cycle before exit. Let it finish; a stale heartbeat does not prove execution stopped. |
+| An expired reservation blocks work after a controller restart | Polling may reclaim an expired owned `reserved` attempt with a new generation. `submitting` and later states require reliable execution evidence. |
+| Saved results exist but the job still appears processing | Reconcile with the matching worker adapter and database/audio paths. Valid saved stop proof and the entire verified bundle are required; see the worker guide. |
+| Dispatcher reports `database_busy` | Another SQLite writer exceeded the bounded lock wait. Diagnose that writer and retry the cycle; this does not permit an additional worker launch. |
+| Worker exit is unknown or its bundle is invalid | Keep the attempt occupied and inspect evidence. Heartbeat age, a timeout, file presence or a duplicate child's exit cannot authorize replacement. |
+| Native `local` inference was interrupted | FastAPI background work is not recovered on restart. Preserve the job for inspection. The separate queued worker can reconcile saved stop evidence and results; it cannot invent missing proof. |
+| Browser shows old colors/layout or `Cannot set properties of null` | Rebuild after source changes, then reload. An older script can refer to an element removed from newer HTML. Use Ctrl+Shift+R once to clear assets cached before the revalidation fix. See below. |
 
-The current queue prioritizes avoiding duplicate execution over automatically
-recovering every failure. Publication recovery is implemented. Automatic failure
-resolution and safe retries of uncertain real executions are not.
+The queue prioritizes avoiding duplicate execution over recovering every failure
+automatically. Publication recovery is implemented. Automatic failure resolution
+and safe retries of uncertain real executions are not. Consult
+[real worker recovery](model-worker.md) before changing an attempt's state.
+
+## Browser assets after an update
+
+The HTML and static CSS/JavaScript responses use `Cache-Control: no-cache`.
+Browsers may retain the bytes, but must check freshness before reusing them.
+Unchanged files can still receive an ETag-based `304 Not Modified` response.
+Versioned entry/module URLs also bypass assets cached before this policy existed.
+
+A browser refresh cannot copy changed files into an existing image. Rebuild and
+replace containers first. If the old interface persists, hard-refresh once.
+Signing in again may be needed if the tab's 30-minute access token has expired;
+a UI update does not remove the account or recordings.
 
 ## Reproduce a failure safely
 
 Use the [CI commands](ci.md#run-the-same-checks-locally) for disposable checks.
-The queued smoke deliberately interrupts publication, replaces the API and
-reconciles the original stopped attempt. It verifies exact hashes and IDs rather
-than accepting a second execution as recovery. These scripts create uniquely
-named resources with ownership labels and clean up only their own resources.
+The queued smoke interrupts publication, replaces the API and reconciles the
+original stopped attempt. It verifies exact hashes and IDs, so a second execution
+cannot pass as publication recovery. The scripts use uniquely named, labeled
+resources and clean up only what they own. The real GPU Compose smoke is
+separate from CPU CI; see [local stack verification](local-stack.md#disposable-verification).
 
-Keep a short incident record: input characteristics, processing mode, image or
-commit, last observed job state, exact failure, logs and what action restored the
-flow. Avoid assuming that a successful HTTP response proves processing success.
+Keep an incident record with input characteristics, processing mode, image or
+commit, last observed job state, failure, relevant logs and the action that
+restored operation. A successful HTTP response alone does not prove processing
+success.

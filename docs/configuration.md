@@ -1,15 +1,21 @@
-# Configuration and API guide
+# Configuration and API reference
 
-[Back to the project overview](../README.md). This guide covers local GPU setup,
-API-only modes, storage, authentication, job submission and testing.
+[Back to the project overview](../README.md). For everyday local use, follow the
+[Docker Compose quickstart](../README.md#start-locally-with-docker-compose).
+This document covers configuration, API behavior and the alternative native
+Python setup. Compose already supplies its container dependencies, storage paths,
+migrations and processor; you do not need the native installation below to use it.
 
 ## Setup
 
-Development currently takes place in Ubuntu through WSL2.
+This section starts the application directly in a Python environment on
+Ubuntu/WSL2. Its environment variables and data are separate from Compose.
+The root `.env` is read by Compose; native Python commands do not load it
+automatically.
 
 ### Prerequisites
 
-- Python 3.12+
+- Python 3.12 for the tested runtime
 - Git
 - NVIDIA GPU and a compatible CUDA-enabled PyTorch environment for GPU inference
 
@@ -41,10 +47,12 @@ python -m pip install --no-deps --no-build-isolation .
 python -m pip check
 ```
 
-Then select disabled or queued processing mode as described below. The inference extra
-contains the model package and its GPU inference dependencies. These CPU locks
-do not cover the GPU environment. See [Python Runtime](python-runtime.md)
-for the installation flags, target environment, and lock-update workflow.
+Then select disabled or queued processing mode as described below. The editable
+inference extra supplies the model package and its dependencies; it does not
+reproduce the hash-locked GPU image. The CPU locks cover only the API environment.
+For the separate GPU runtime/build locks, see
+[GPU dependency maintenance](local-stack.md#gpu-image-and-dependency-maintenance).
+See [Python runtime](python-runtime.md) for the installation flags and targets.
 
 Dependencies are declared in `backend/pyproject.toml`. An editable install (`-e`)
 links the environment to the source tree during development. The API deployment
@@ -472,13 +480,13 @@ Malformed cursors return `422`. A cursor is a position, not a credential: every
 page filters ownership using the authenticated account. History remains available
 when new processing is disabled.
 
-The browser's **Your sessions** panel loads the first page after sign-in or a
+The browser's **Recent recordings** panel loads the first page after sign-in or a
 signed-in reload. Select a recording to open its existing job status and outputs.
 **Load more** appends the next page; **Refresh** replaces the list with the newest
 page. A failed request preserves the displayed list and cursor so it can be
 retried. A successful new submission refreshes history, and status polling updates
 the selected job's badge. Other rows update on refresh. Sign-out clears the list
-and invalidates pending requests. The **Open a saved job ID** section remains
+and invalidates pending requests. The **Find by job ID** section remains
 available as an expandable fallback.
 
 ### 5. Check Processing Status
