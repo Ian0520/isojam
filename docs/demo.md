@@ -1,49 +1,86 @@
-# Browser demo and verification evidence
+# Browser workflow and demo evidence
 
-The browser studio supports a complete **local GPU** flow: create an account,
-upload a WAV, submit a job, poll its status, preview a stem and download all seven
-outputs. It also includes a separate CPU container exercise for queued fake work
-and recovery. Neither path is currently deployed as a public service.
+For local use, follow the [Docker Compose quickstart](../README.md#start-locally-with-docker-compose).
+It starts a CPU API and a separate real GPU processor on the same host. Neither
+that stack nor the alternative native setup is a public hosted service.
 
-## Recorded demo
+## Current interface
+
+![Current desktop workspace with orange accents](screenshots/workspace.png)
+
+[Current mobile screenshot](screenshots/workspace-mobile.png).
+
+These screenshots show the current interface with a throwaway account, seeded
+recording history and generated two-second tone WAVs. They demonstrate layout,
+status display and authenticated preview, not real separation or audio quality.
+No personal accounts or recordings were used. The older real-GPU evidence below
+is preserved separately.
+
+## Try the browser workflow
+
+1. Start the stack using the README. Open `http://localhost:8000/`, or the port
+   configured in `.env`. The example opens registration for local account creation.
+2. Select **Create account** and enter an email/password, or use **Sign in**.
+   Registration signs in automatically. If login fails after account creation,
+   use the created account to retry sign-in rather than registering again.
+3. Choose a short WAV you have permission to use and select **Separate audio**.
+   The upload form collapses and the selected recording shows queued/processing
+   status. The API reports states, not numeric progress, so the page displays no
+   invented percentage.
+4. When completed, use **Preview** or **Download** beside a track. The player
+   appears below the seven tracks. **Details** reveals the job ID and a manual
+   status refresh.
+5. Reopen work from **Recent recordings**. **Load more** appends another history
+   page; **Refresh** returns to the newest page. **Find by job ID** is an expandable
+   fallback. The account must own the recording. Reloading restores an acknowledged
+   selected job while the tab's sign-in remains valid.
+6. Use **Separate another recording** to expand the upload form. It becomes
+   usable after the active recording finishes. Sign out through the email menu
+   in the header. Submitted jobs continue independently of the browser.
+
+In Compose, model assets are prepared explicitly before startup and verified by
+the processor. Its real worker loads the model for each job. Native `local` mode
+instead loads a model session during API startup; see the
+[alternative native setup](configuration.md#setup). The CPU image alone has no
+model. Queued mode accepts jobs; the worker adapter determines whether outputs
+come from real `local-model` inference or the explicit `local-fake` test worker.
+
+## Workspace and cache checks (2026-10-19)
+
+During the frontend change, 18 Node authentication/history tests and 13 Python
+web-route/cache tests passed. Isolated browser checks exercised empty and populated
+accounts, upload/processing/completion, seven track rows, authenticated preview
+and download, sign-out, selected-job restoration and narrow-screen filenames.
+
+A separate cache regression check first loaded the earlier release with cached
+JavaScript/CSS, then served the newer HTML. It reproduced
+`Cannot set properties of null (setting 'hidden')`. With versioned asset URLs and
+revalidation headers, an ordinary reload restored the recording and all seven
+tracks without that error. HTTP tests cover cache headers on both 200 and 304
+responses. These are frontend/integration checks, not new GPU throughput results.
+
+The current screenshots were captured on 2026-10-19 at desktop and 390-pixel mobile
+viewport overrides. No horizontal document overflow appeared in the mobile check.
+Their temporary API, SQLite data and synthetic audio are separate from personal
+Compose volumes.
+
+## Recorded real-GPU demo (earlier interface)
 
 [Watch the local GPU browser recording](demo/real-separation.webm).
 
-The recording is approximately 14 seconds and contains video only. It uses a
-throwaway account and an original synthetic melody rather than a commercial
-recording. The screenshots below show the real completed model job, not the fake
-queued worker.
+The approximately 14-second recording has no audio. It uses a throwaway account
+and an original synthetic melody, with real BS-RoFormer inference. It shows the
+earlier green interface and its older labels. Preserve it as processing evidence;
+use the current screenshots and workflow above for today's interface.
 
-![Desktop studio with seven real stems](screenshots/studio.png)
+[Original desktop screenshot](screenshots/studio.png) ·
+[Original mobile screenshot](screenshots/studio-mobile.png).
 
-[Mobile screenshot](screenshots/studio-mobile.png).
+## Verification from the original recorded demo
 
-## Run your own demo
-
-1. Follow [local GPU setup](configuration.md#setup): install the inference extra,
-   use a compatible CUDA-enabled PyTorch environment, configure the JWT secret,
-   and run `alembic upgrade head` against the selected database.
-2. From `backend`, activate the environment, set `ISOJAM_PROCESSING_MODE=local`
-   and `ISOJAM_REGISTRATION_MODE=open` for local account creation, then run
-   `uvicorn app.main:app --host 127.0.0.1 --port 8000`.
-3. Open `http://127.0.0.1:8000/`. Create an account or sign in.
-4. Choose a short WAV you have permission to use, then select **Separate audio**.
-   Watch pending/processing become completed. The page displays no invented
-   percentage because the API reports state rather than numeric progress.
-5. Preview an instrument and download its WAV. Reload the page to restore the
-   selected session, or select previous work from **Your sessions**. **Load more**
-   appends another history page; **Refresh** returns to the newest page. Saved
-   job IDs can also be entered in the expandable lookup. The same account must
-   own the job.
-6. Sign out. The browser removes its tab-scoped token and audio URLs; accepted
-   server jobs continue independently of the browser.
-
-The first model startup may download weights and takes longer than a warm job.
-The CPU image has no model; running it alone will not separate your music.
-In `queued` mode, the browser labels the outputs as demonstration audio and a
-separate `python -m app.dispatcher --once --adapter local-fake` cycle is required.
-
-## Verification results
+These results belong to the original recorded run and are not a count of the
+current test suite. Later Compose/GPU checks are recorded in the
+[local stack guide](local-stack.md#verification-recorded-on-2026-10-18).
 
 | Check | Observed result |
 | --- | --- |
@@ -90,8 +127,9 @@ a separate initially empty account, and synthetic WAVs. This exercised:
 Nine Node controller tests also cover pagination, retry, competing refreshes,
 account-reset races, and status updates. They now run in CI. These checks validate
 the browser/history flow; the fixture does not perform real model inference.
-The container build could not be rerun locally because Docker was unavailable in
-WSL; the updated asset smoke and existing container checks remain part of CI.
+At that checkpoint Docker was unavailable in WSL, so the container build was not
+rerun locally. Subsequent builds and real GPU container/Compose verification are
+recorded in the local stack guide linked above.
 
 ## One measured local run
 
@@ -114,5 +152,6 @@ quality. The [earlier model spike](model-spike.md) records separate, subjective
 quality observations on music and longer-track timings.
 
 Input and generated audio remain outside Git. Only screenshots and a silent
-screen recording are committed. See [operations](operations.md) for diagnostic
+screen recording are committed. The new interface screenshots use separate
+synthetic preview fixtures, as described above. See [operations](operations.md) for diagnostic
 commands and the current recovery limits.

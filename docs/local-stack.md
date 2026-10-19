@@ -1,5 +1,10 @@
 # Local API and GPU processor with Docker Compose
 
+For complete first-time instructions and account creation, start with the
+[README quickstart](../README.md#start-locally-with-docker-compose). This guide
+covers the stack's operation, storage, shutdown and dependency maintenance.
+For startup failures, see [operations and troubleshooting](operations.md).
+
 Run these commands in Ubuntu/WSL2 from the repository root. This stack is for
 one local NVIDIA GPU, one processor and local browser access. It uses its own
 Docker volumes; it does not import the database or audio from your native Python
@@ -44,24 +49,10 @@ the images manually on another architecture; that does not provide a CUDA GPU.
 
 ## First setup
 
-Create a private configuration file and generate a signing secret:
-
-```bash
-cp .env.example .env
-python3 -c "import secrets; print(secrets.token_hex(32))"
-```
-
-Paste the generated value after `ISOJAM_JWT_SECRET_KEY=` in `.env`. Keep the file
-and secret stable across container replacements. Git ignores `.env`. The example
-explicitly opens registration for local account creation; switch to `closed` or
-`invite` later as described in [registration configuration](configuration.md#configure-registration).
-
-Build both images, then prepare the persistent model cache:
-
-```bash
-docker compose build
-docker compose run --rm models
-```
+Follow the [README setup steps](../README.md#start-locally-with-docker-compose)
+to check Docker, create `.env` without replacing an existing secret, build both
+images, prepare models and start the stack. Compose needs no native Python
+virtual environment. Keep `.env` stable across container replacements.
 
 The first build downloads large CUDA wheels. The model setup command downloads
 the pinned checkpoint, copies the configuration bundled in the pinned inference
@@ -71,15 +62,12 @@ from the upstream remote-download YAML. Repeating it reuses valid cached files.
 Model weights are not embedded in the image or committed to Git. Normal processor startup only verifies the cache;
 it fails with a useful error if files are missing or damaged.
 
-Start the stack:
-
-```bash
-docker compose up --abort-on-container-failure
-```
-
 Migrations must succeed before the processor starts. The processor must pass its
 GPU/cache preflight before the API starts. Open <http://127.0.0.1:8000/> and upload
-a short WAV to try real processing. The terminal shows both services' logs.
+a short WAV after creating an account to try real processing. The terminal shows
+both services' logs. The example `.env` opens registration; the application
+otherwise defaults to `closed`. See
+[registration configuration](configuration.md#configure-registration).
 The model is loaded by the worker for each job, rather than by the API.
 
 The `models` setup service stays outside normal `up` because it has a setup

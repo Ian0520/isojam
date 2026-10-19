@@ -1,5 +1,10 @@
 # CPU API container
 
+For normal local separation, start with the
+[Docker Compose quickstart](../README.md#start-locally-with-docker-compose).
+This guide is the alternative standalone CPU container exercise. It starts no GPU
+processor and uses `backend/.env.container`, not Compose's root `.env`.
+
 This image packages the API for Linux x86_64 using Python 3.12.14. It runs in
 `disabled` processing mode by default and contains no inference or test dependencies.
 Authentication, uploads, job status, and existing output downloads remain
@@ -12,8 +17,8 @@ environment or the separate [GPU processor image](local-stack.md); see also
 [Real model worker](model-worker.md). This CPU image still cannot run inference.
 Use the [local Compose guide](local-stack.md) for coordinated API/processor startup
 and shutdown. Remote control and storage remain later work.
-The image includes the browser studio at `/`; it labels queued processing as
-queued processing and disabled mode as playback only.
+The image includes the browser at `/`. The displayed processing mode describes
+the API configuration; it does not prove that a processor is running.
 
 The repository contains the recipe and application files. `docker build` creates
 an image in Docker's storage; `docker run` creates a container from that image and
