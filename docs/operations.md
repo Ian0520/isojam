@@ -96,7 +96,8 @@ not rotate automatically; Docker stdout/stderr logs rotate separately.
 | New jobs return 503 | Check the processing mode. The standalone CPU image defaults to `disabled`; Compose explicitly uses `queued` and starts a processor. Native setup needs its own model/dispatcher configuration. |
 | API reports separation availability but jobs stay queued | That label reflects API mode, not live GPU readiness. Check processor health/logs. The single global slot may be held by an unfinished or uncertain attempt; do not start competing workers to bypass it. |
 | Real model worker fails | Inspect the invocation log under `worker-logs` in audio storage. Check CUDA, cached assets and input characteristics. A confirmed nonzero exit without a manifest becomes failed; inference is not automatically retried. |
-| Upload returns 413 / 422 | Check byte/duration limits and decoded mono/stereo WAV content. Renaming a file does not make it valid audio. |
+| Upload returns 413 / 422 | Check upload size, converted size, duration and readable mono/stereo content. Supported files are WAV, MP3, M4A, AAC and FLAC; renaming a file does not convert its contents. |
+| Upload returns 503 | Conversion may be busy; retry after current uploads finish. For missing conversion tools, rebuild the API image or install FFmpeg/ffprobe in the native API environment. |
 | Browser sign-in expires | Sign in again and reopen the recording from **Recent recordings** or **Find by job ID**. Tokens expire after 30 minutes; there is no refresh-token flow. |
 | Create account is hidden or registration returns 403 | Check `ISOJAM_REGISTRATION_MODE`. For local signup use `open`, recreate the API, then reload. In `invite` mode, use a valid code for the exact invited email. Closing registration preserves existing accounts and login. |
 | Submission returns 429 | The account reached its unfinished-job allowance. Inspect pending/processing work before submitting more. |

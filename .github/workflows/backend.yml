@@ -30,9 +30,10 @@ jobs:
           node --check backend/app/static/app.js
           node --check backend/app/static/auth.js
           node --check backend/app/static/history.js
+          node --check backend/app/static/uploads.js
 
-      - name: Test browser authentication and history coordination
-        run: node --test backend/tests/test_auth_browser.mjs backend/tests/test_job_history_browser.mjs
+      - name: Test browser authentication, uploads and history coordination
+        run: node --test backend/tests/test_auth_browser.mjs backend/tests/test_upload_browser.mjs backend/tests/test_job_history_browser.mjs
 
       - name: Build CPU runtime image
         run: docker build --platform linux/amd64 --tag isojam-api:ci backend
@@ -49,4 +50,4 @@ jobs:
           --processing-mode queued --dispatch-fake-worker --recover-publication
 
       - name: Verify Compose startup, shutdown and persistent replacement
-        run: python3 backend/scripts/smoke_compose.py --api-image isojam-api:ci
+        run: python3 backend/scripts/smoke_compose.py --api-image isojam-api:ci --audio-format mp3

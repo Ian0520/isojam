@@ -1,8 +1,12 @@
+import shutil
+import subprocess
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from uuid import uuid4
 
+import numpy as np
 import pytest
+import soundfile as sf
 from alembic import command
 from alembic.config import Config
 from fastapi.testclient import TestClient
@@ -117,6 +121,35 @@ def auth_headers(test_session_factory, jwt_secret_key):
 @pytest.fixture
 def wav_bytes():
     return make_wav_bytes()
+
+
+@pytest.fixture
+def encoded_audio(tmp_path):
+    """Make real compressed audio from synthetic PCM; no external media needed."""
+
+    def encode(
+        suffix=".mp3", *, channels=2, frames=4410, sample_rate=44100, codec=None
+    ):
+        if not shutil.which("ffmpeg") or not shutil.which("ffprobe"):
+            pytest.skip("Real audio conversion tests require ffmpeg and ffprobe")
+        source = tmp_path / f"{uuid4()}.wav"
+        tone = 0.25 * np.sin(2 * np.pi * 440 * np.arange(frames) / sample_rate)
+        sf.write(source, np.tile(tone[:, None], (1, channels)), sample_rate)
+        destination = source.with_suffix(suffix)
+        command = ["ffmpeg", "-nostdin", "-v", "error", "-i", str(source)]
+        if codec:
+            command += ["-c:a", codec]
+        subprocess.run(
+            [*command, str(destination)],
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            timeout=10,
+        )
+        source.unlink()
+        return destination
+
+    return encode
 
 
 @pytest.fixture(params=["models", "migration"])

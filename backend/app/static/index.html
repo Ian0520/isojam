@@ -10,7 +10,7 @@
     />
     <title>IsoJam</title>
     <link rel="stylesheet" href="/static/styles.css?v=workspace" />
-    <script src="/static/app.js?v=workspace" type="module"></script>
+    <script src="/static/app.js?v=audio-imports" type="module"></script>
   </head>
   <body>
     <div class="shell">
@@ -172,7 +172,7 @@
               <summary>
                 <h1 id="upload-title">Separate a recording</h1>
                 <span class="disclosure-hint" aria-hidden="true"
-                  >Choose a WAV</span
+                  >Choose audio</span
                 >
               </summary>
               <div class="upload-content">
@@ -181,14 +181,14 @@
                 </p>
                 <form id="upload-form">
                   <label class="file-picker" for="audio-file">
-                    <strong id="file-name">Choose a WAV file</strong>
+                    <strong id="file-name">Choose an audio file</strong>
                     <span id="file-detail"
-                      >Select a recording from your computer</span
+                      >WAV, MP3, M4A, AAC or FLAC</span
                     >
                     <input
                       id="audio-file"
                       type="file"
-                      accept=".wav,audio/wav,audio/x-wav"
+                      accept=".wav,.mp3,.m4a,.aac,.flac"
                       required
                     />
                   </label>
@@ -250,7 +250,7 @@
             </div>
           </section>
           <footer>
-            <span>WAV source separation for practice.</span>
+            <span>Instrument tracks for practice.</span>
             <a href="/docs">API documentation</a>
           </footer>
         </div>

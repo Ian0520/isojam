@@ -10,6 +10,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /opt/isojam
 
+# Conversion runs in the CPU API before jobs reach the GPU processor.
+RUN apt-get update \
+    && apt-get install --no-install-recommends -y ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
 # Install pinned dependencies before copying source so code edits reuse this layer.
 COPY requirements-api.txt ./
 RUN python -m pip install pip==26.2.1 \

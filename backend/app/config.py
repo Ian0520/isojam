@@ -4,6 +4,7 @@ from pathlib import Path
 
 ACCESS_TOKEN_EXPIRES_DELTA = timedelta(minutes=30)
 DEFAULT_MAX_UPLOAD_BYTES = 200 * 1024 * 1024
+DEFAULT_MAX_CONVERTED_AUDIO_BYTES = 256 * 1024 * 1024
 DEFAULT_MAX_AUDIO_DURATION_SECONDS = 10 * 60
 DEFAULT_MAX_UNFINISHED_JOBS_PER_USER = 2
 PROCESSING_MODES = ("local", "disabled", "queued")
@@ -30,6 +31,12 @@ def _get_positive_int(name: str, default: int) -> int:
 
 def get_max_upload_bytes() -> int:
     return _get_positive_int("ISOJAM_MAX_UPLOAD_BYTES", DEFAULT_MAX_UPLOAD_BYTES)
+
+
+def get_max_converted_audio_bytes() -> int:
+    return _get_positive_int(
+        "ISOJAM_MAX_CONVERTED_AUDIO_BYTES", DEFAULT_MAX_CONVERTED_AUDIO_BYTES
+    )
 
 
 def get_max_audio_duration_seconds() -> int:

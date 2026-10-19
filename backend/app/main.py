@@ -9,6 +9,7 @@ from app.config import (
     REGISTRATION_MODES,
     get_jwt_secret_key,
     get_max_audio_duration_seconds,
+    get_max_converted_audio_bytes,
     get_max_unfinished_jobs_per_user,
     get_max_upload_bytes,
     get_processing_mode,
@@ -34,11 +35,16 @@ def create_app(
     max_unfinished_jobs_per_user: int | None = None,
     processing_mode: str | None = None,
     registration_mode: str | None = None,
+    max_converted_audio_bytes: int | None = None,
 ):
     if max_upload_bytes is not None and (
         type(max_upload_bytes) is not int or max_upload_bytes <= 0
     ):
         raise ValueError("max_upload_bytes must be a positive integer")
+    if max_converted_audio_bytes is not None and (
+        type(max_converted_audio_bytes) is not int or max_converted_audio_bytes <= 0
+    ):
+        raise ValueError("max_converted_audio_bytes must be a positive integer")
     if max_audio_duration_seconds is not None and (
         type(max_audio_duration_seconds) is not int or max_audio_duration_seconds <= 0
     ):
@@ -63,6 +69,11 @@ def create_app(
         )
         app.state.max_upload_bytes = (
             max_upload_bytes if max_upload_bytes is not None else get_max_upload_bytes()
+        )
+        app.state.max_converted_audio_bytes = (
+            max_converted_audio_bytes
+            if max_converted_audio_bytes is not None
+            else get_max_converted_audio_bytes()
         )
         app.state.max_audio_duration_seconds = (
             max_audio_duration_seconds

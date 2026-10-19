@@ -1,5 +1,6 @@
 import { authenticate } from "./auth.js?v=workspace";
 import { JobHistory } from "./history.js?v=workspace";
+import { audioUploadBody, validateAudioFile } from "./uploads.js?v=audio-imports";
 
 const $ = (id) => document.getElementById(id);
 const storage = {
@@ -117,8 +118,8 @@ function clearSession() {
   jobHistory.clear();
   state.file = null;
   $("audio-file").value = "";
-  $("file-name").textContent = "Choose a WAV file";
-  $("file-detail").textContent = "Select a recording from your computer";
+  $("file-name").textContent = "Choose an audio file";
+  $("file-detail").textContent = "WAV, MP3, M4A, AAC or FLAC";
   $("resume-id").value = "";
   $("job-id-lookup").open = false;
   $("signed-in").open = false;
@@ -185,7 +186,7 @@ function updateControls() {
     Boolean(active) ||
     state.accepted;
   $("separate").textContent = state.busy
-    ? "Submitting…"
+    ? state.uploadId ? "Submitting…" : "Preparing audio…"
     : state.accepted
       ? "Submitted"
       : state.uploadId
@@ -241,7 +242,7 @@ function renderHistory() {
       : jobHistory.loading
         ? "Loading recordings…"
         : jobHistory.loaded && !jobHistory.items.length
-          ? "No recordings yet. Submit a WAV to get started."
+          ? "No recordings yet. Submit a recording to get started."
           : "";
   message.hidden = !message.textContent;
   message.classList.toggle("error", Boolean(jobHistory.error));
@@ -383,18 +384,17 @@ $("audio-file").addEventListener("change", () => {
   const file = $("audio-file").files[0];
   state.file = null;
   notice("");
-  $("file-name").textContent = file?.name || "Choose a WAV file";
+  $("file-name").textContent = file?.name || "Choose an audio file";
   $("file-detail").textContent = file
-    ? `${(file.size / 1024 / 1024).toFixed(1)} MiB · WAV recording`
-    : "Select a recording from your computer";
+    ? `${(file.size / 1024 / 1024).toFixed(1)} MiB`
+    : "WAV, MP3, M4A, AAC or FLAC";
   if (file) {
-    if (!file.name.toLowerCase().endsWith(".wav"))
-      notice("Please choose a WAV recording.", true);
-    else if (!file.size || file.size > state.info.max_upload_bytes)
-      notice("This file is empty or exceeds the upload limit.", true);
-    else {
+    try {
+      validateAudioFile(file, state.info);
       state.file = file;
       state.key = crypto.randomUUID();
+    } catch (error) {
+      notice(error.message, true);
     }
   }
   updateControls();
@@ -417,15 +417,11 @@ $("upload-form").addEventListener("submit", async (event) => {
   notice("");
   try {
     if (!state.uploadId) {
-      const body = new FormData();
-      body.append(
-        "audio_file",
-        state.file.slice(0, state.file.size, "audio/wav"),
-        state.file.name,
-      );
+      const body = audioUploadBody(state.file, state.info);
       const upload = await jsonRequest("/uploads", { method: "POST", body });
       if (epoch !== state.epoch) return;
       state.uploadId = upload.id;
+      updateControls();
     }
     // Preserve this key after an ambiguous response; retry retrieves the original job.
     const response = await fetch("/jobs", {
@@ -696,12 +692,13 @@ async function initialize() {
       disabled: "Playback only",
     }[mode];
     $("mode-note").textContent = {
-      local: "Separate a WAV recording into individual instrument tracks.",
+      local: "Separate a recording into individual instrument tracks.",
       queued:
-        "Separate a WAV into instrument tracks. Processing continues if you leave this page.",
+        "Separate a recording into instrument tracks. Processing continues if you leave this page.",
       disabled:
         "New separation is unavailable. Sign in to preview or download your saved tracks.",
     }[mode];
+    $("audio-file").accept = Object.keys(state.info.audio_upload_types).join(",");
     $("upload-limits").textContent =
       `Up to ${Math.floor(state.info.max_upload_bytes / 1024 / 1024)} MiB · ${Math.floor(state.info.max_audio_duration_seconds / 60)} min · mono or stereo`;
     updateControls();
