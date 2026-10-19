@@ -2,8 +2,35 @@
 
 The importer downloads one non-live YouTube video's audio and produces a
 validated WAV. The authenticated API queues durable imports, and a separate CPU
-worker registers successful results as owned uploads. The browser has no URL
-field yet; the standalone command remains available for independent checks.
+worker registers successful results as owned uploads. The browser connects these
+uploads to instrument separation; the standalone command remains available for
+independent checks.
+
+## Browser workflow
+
+Sign in, choose **YouTube link**, paste a video URL and select **Separate audio**.
+The page shows preparation progress first, then opens the recording's separation
+status and tracks. Preparing audio and separating instruments are different stages.
+One non-live video is supported per submission; the same duration and size limits
+used by the API appear beneath the URL field.
+
+The browser saves the selected URL, retry key and accepted import ID in tab-scoped
+session storage under the signed-in account. Reloading or signing back into that
+account resumes the selected import. Retrying an interrupted response reuses the
+same key. A failed download requires a deliberate **Try import again** action,
+which starts a fresh request. Separation submissions use a stable key derived from
+the import ID, so reopening a prepared import retrieves its existing job.
+
+**Recent YouTube imports** loads the latest 20 imports from the server. **Continue**
+opens prepared audio or its existing recording, and unfinished imports can be
+resumed even without a browser bookmark. Failed entries offer **Retry import**.
+Changing accounts clears the displayed imports and ignores responses from the
+previous account. Browser storage is a convenience; the server enforces ownership.
+
+If the page closes during preparation, the CPU importer can finish downloading,
+but separation waits for the browser to return and submit the prepared upload.
+After separation is queued, it continues independently of the page. Server-side
+download failures and temporarily full queues display feedback with a retry path.
 
 ## Background API workflow
 
@@ -163,8 +190,7 @@ for all 115 maintained Python files. The importer lock regenerated identically;
 the API and GPU locks were unchanged. Offline container checks confirmed the
 packaged downloader, EJS scripts, Deno, FFmpeg and ffprobe.
 
-The background API and worker are implemented. Browser integration is the next
-slice; this document's API steps can be exercised through `/docs` in the meantime.
+The API steps above can also be exercised directly through `/docs`.
 
 ### Background queue verification
 
@@ -183,3 +209,19 @@ check exercised import and job admission; it did not run GPU inference.
 The disposable Compose smoke also passed startup, shutdown, MP3 conversion,
 queued execution and persistent replacement with the importer service included.
 The normal personal-use stack and its volumes were left untouched.
+
+### Browser integration verification
+
+All 51 Node browser/controller tests and 52 focused backend tests passed for this
+slice, along with JavaScript syntax, Python lint/formatting and the packaged API
+image's HTTP/persistence smoke check. The browser tests cover lost import and job
+responses, reloads, sign-out, expired credentials, account changes, disabled
+admission, local-file uploads and preserving an explicitly opened history item.
+
+A real-browser check used a live YouTube download with the real API/import worker
+and the CPU fake separation adapter. Reloading during preparation resumed the
+import, reached a completed recording and displayed seven simulated outputs.
+Reopening the import retained exactly one import, upload, job and attempt.
+This verified browser coordination, not real GPU inference or separation quality.
+The page fit both the narrow viewport and a 1280 px desktop viewport without
+horizontal overflow, and no browser runtime errors were recorded.

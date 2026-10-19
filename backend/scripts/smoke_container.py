@@ -82,6 +82,7 @@ def verify_browser_assets(port, processing_mode, registration_mode):
         ("/static/auth.js", "javascript"),
         ("/static/history.js", "javascript"),
         ("/static/uploads.js", "javascript"),
+        ("/static/imports.js", "javascript"),
         ("/static/styles.css", "text/css"),
     ):
         with urlopen(f"http://127.0.0.1:{port}{path}", timeout=3) as response:

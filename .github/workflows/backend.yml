@@ -31,9 +31,10 @@ jobs:
           node --check backend/app/static/auth.js
           node --check backend/app/static/history.js
           node --check backend/app/static/uploads.js
+          node --check backend/app/static/imports.js
 
-      - name: Test browser authentication, uploads and history coordination
-        run: node --test backend/tests/test_auth_browser.mjs backend/tests/test_upload_browser.mjs backend/tests/test_job_history_browser.mjs
+      - name: Test browser authentication, uploads, imports and history coordination
+        run: node --test backend/tests/test_*_browser.mjs
 
       - name: Build CPU runtime image
         run: docker build --platform linux/amd64 --tag isojam-api:ci backend

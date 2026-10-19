@@ -32,6 +32,8 @@ def test_browser_assets_and_runtime_info_in_each_mode(
         assert history_script.status_code == 200
         assert "javascript" in history_script.headers["content-type"]
         assert client.get("/static/uploads.js").status_code == 200
+        assert client.get("/static/imports.js").status_code == 200
+        assert 'id="youtube-form"' in page.text
         assert client.get("/static/styles.css").status_code == 200
         assert client.get("/ui-info").json() == {
             "processing_mode": mode,
@@ -56,7 +58,8 @@ def test_browser_assets_and_runtime_info_in_each_mode(
 
 
 @pytest.mark.parametrize(
-    "asset", ["app.js", "auth.js", "history.js", "uploads.js", "styles.css"]
+    "asset",
+    ["app.js", "auth.js", "history.js", "uploads.js", "imports.js", "styles.css"],
 )
 def test_browser_assets_require_revalidation_including_not_modified(client, asset):
     # The new URL also bypasses old entries cached before this policy existed.

@@ -9,8 +9,8 @@
       content="Separate recordings into instrument tracks for practice."
     />
     <title>IsoJam</title>
-    <link rel="stylesheet" href="/static/styles.css?v=workspace" />
-    <script src="/static/app.js?v=audio-imports" type="module"></script>
+    <link rel="stylesheet" href="/static/styles.css?v=youtube-imports" />
+    <script src="/static/app.js?v=youtube-imports" type="module"></script>
   </head>
   <body>
     <div class="shell">
@@ -179,6 +179,10 @@
                 <p id="mode-note" class="muted">
                   Checking processing availability…
                 </p>
+                <div id="source-tabs" class="source-tabs" aria-label="Audio source" hidden>
+                  <button id="file-source" type="button" aria-pressed="true">Audio file</button>
+                  <button id="youtube-source" type="button" aria-pressed="false">YouTube link</button>
+                </div>
                 <form id="upload-form">
                   <label class="file-picker" for="audio-file">
                     <strong id="file-name">Choose an audio file</strong>
@@ -204,6 +208,40 @@
                     </button>
                   </div>
                 </form>
+                <div id="youtube-panel" hidden>
+                  <form id="youtube-form">
+                    <label for="youtube-url">YouTube video URL</label>
+                    <div class="youtube-input-row">
+                      <input id="youtube-url" type="url" name="youtube_url"
+                        placeholder="https://www.youtube.com/watch?v=…"
+                        autocomplete="off" autocapitalize="none" spellcheck="false"
+                        maxlength="2048" aria-describedby="youtube-help" required disabled />
+                      <button id="youtube-submit" class="button primary" type="submit" disabled>
+                        Separate audio
+                      </button>
+                    </div>
+                    <p id="youtube-help" class="muted">
+                      One non-live video, within the audio limits below. Audio is prepared
+                      first, then sent for separation. Return to this page to continue if
+                      you leave before preparation finishes.
+                    </p>
+                    <p id="youtube-limits" class="muted"></p>
+                    <p id="youtube-availability" class="muted" hidden></p>
+                  </form>
+                  <div id="youtube-progress" class="import-progress" aria-live="polite" hidden>
+                    <strong id="youtube-status"></strong>
+                    <p id="youtube-message" class="muted"></p>
+                    <div id="youtube-indicator" class="processing-indicator" aria-label="Preparing audio" hidden><span></span></div>
+                    <button id="youtube-reset" class="text-button" type="button" hidden>Use another link</button>
+                    <button id="youtube-open-job" class="text-button" type="button" hidden>Open recording</button>
+                  </div>
+                  <details id="youtube-recent" class="import-recent" hidden>
+                    <summary>Recent YouTube imports</summary>
+                    <button id="youtube-refresh" class="text-button" type="button">Refresh imports</button>
+                    <p id="youtube-list-message" class="muted" role="status" hidden></p>
+                    <ul id="youtube-imports" class="import-list" aria-label="Recent YouTube imports"></ul>
+                  </details>
+                </div>
               </div>
             </details>
           </section>

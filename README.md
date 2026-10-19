@@ -2,8 +2,9 @@
 
 [![Backend CI](https://github.com/Ian0520/isojam/actions/workflows/backend.yml/badge.svg)](https://github.com/Ian0520/isojam/actions/workflows/backend.yml)
 
-**Turn songs into practice tracks.** Upload a WAV, MP3, M4A, AAC or FLAC recording, separate its
-instruments with BS-RoFormer, then preview or download the tracks in your browser.
+**Turn songs into practice tracks.** Upload a WAV, MP3, M4A, AAC or FLAC recording,
+or paste a YouTube video link. Separate its instruments with BS-RoFormer, then
+preview or download the tracks in your browser.
 
 IsoJam runs locally with a CPU API, a CPU audio importer and a separate NVIDIA GPU processor. It uses
 Python, FastAPI, SQLAlchemy, SQLite and Docker Compose. Accounts, recordings and
@@ -116,6 +117,14 @@ If you changed `ISOJAM_PORT` in `.env`, use that port instead.
    next history page; **Refresh** returns to the newest page. **Details** contains
    the job ID, and **Find by job ID** opens an owned recording directly.
 
+For a YouTube source, select **YouTube link**, paste one non-live video URL and
+select **Separate audio**. IsoJam first downloads and prepares the audio, then
+queues instrument separation. If you leave during preparation, return and sign
+in to continue; once separation is queued, it continues in the background.
+**Recent YouTube imports** lets you resume prepared audio or reopen its recording
+without downloading it again. See the [import workflow](docs/youtube-imports.md)
+for supported links, limits and recovery behavior.
+
 This Compose stack uses its own data volume. It does not import accounts or
 recordings from an earlier native Python environment or a manual Docker exercise.
 
@@ -134,7 +143,7 @@ recordings, outputs and cached models.
 
 The importer also finishes its current download/conversion before stopping,
 with a three-minute stop grace. Its [API workflow and recovery behavior](docs/youtube-imports.md)
-are documented separately; the browser URL field is the next integration slice.
+are documented in the [YouTube import guide](docs/youtube-imports.md).
 
 From another terminal, these commands also preserve the named volumes:
 
@@ -255,8 +264,10 @@ retention or backup policy.
 Browser access tokens are tab-scoped, expire after 30 minutes and have no refresh
 flow. Preview downloads the whole authenticated WAV before playback. Custom
 backing-track mixing, looping and speed adjustment are not implemented.
-The browser accepts local audio files. A [background YouTube import API](docs/youtube-imports.md)
-and standalone importer are available; browser URL imports are not connected yet.
+The browser accepts local audio files and single-video YouTube links. Live videos,
+playlists and arbitrary website URLs are unsupported. Download availability depends
+on YouTube and the pinned downloader; the [import guide](docs/youtube-imports.md)
+describes failures and manual checks.
 
 The queue favors avoiding duplicate execution when a worker's exit is uncertain.
 Automatic inference retry of uncertain attempts is not supported. A successful
