@@ -17,6 +17,9 @@ automatically.
 
 - Python 3.12 for the tested runtime
 - Git
+- FFmpeg and ffprobe for MP3, M4A, AAC and FLAC uploads; the CPU container supplies
+  both. For native Ubuntu/WSL use `sudo apt-get update` and
+  `sudo apt-get install --no-install-recommends ffmpeg`. WAV uploads work without them.
 - NVIDIA GPU and a compatible CUDA-enabled PyTorch environment for GPU inference
 
 ### Install Dependencies
@@ -179,17 +182,29 @@ limit in the shell used to start the application:
 ```bash
 export ISOJAM_MAX_UPLOAD_BYTES=104857600
 export ISOJAM_MAX_AUDIO_DURATION_SECONDS=300
+export ISOJAM_MAX_CONVERTED_AUDIO_BYTES=134217728
 ```
 
-This example sets a 100 MiB file limit and a 5-minute duration limit. The default
-duration limit is 10 minutes. Both settings must be positive integers; invalid
+This example sets a 100 MiB upload limit, a 5-minute duration limit and a 128 MiB
+converted-file limit. Defaults are 200 MiB, 10 minutes and 256 MiB respectively.
+All settings must be positive integers; invalid
 configuration fails startup before the model loads.
 
-Uploads must contain readable, nonempty mono or stereo WAV audio at 8-96 kHz.
-PCM and floating-point WAV audio are supported, including WAVEX. All samples are
-checked for non-finite values through bounded block decoding. Invalid audio
-returns `422`; files exceeding the byte or duration limit return `413`. Rejected
-files are removed without saving upload metadata.
+Uploads accept WAV, MP3, M4A (AAC/ALAC), raw AAC and FLAC. Inputs must have nonempty,
+readable mono or stereo audio at 8-96 kHz. WAV/WAVEX PCM and floating-point uploads
+are preserved byte-for-byte. Additional formats are inspected with ffprobe and
+decoded with FFmpeg into 44.1 kHz floating-point WAV, retaining mono/stereo channels.
+Conversion cannot restore information lost in a lossy recording.
+
+Duration, converted size and finite samples are checked against actual decoded
+audio through bounded blocks. Conversion uses local files only, has a 5-second
+inspection timeout and a 30-second decoding timeout, and allows two simultaneous
+conversions per API process. Invalid audio returns `422`; upload, duration or
+converted-size violations return `413`. Busy conversion or missing FFmpeg/ffprobe
+returns `503`. Unsupported filename/content-type combinations return `415`.
+Rejected requests remove their temporary files without creating upload metadata.
+The original compressed file is removed after successful conversion and validation;
+the upload record keeps its display filename and points to the stored WAV.
 
 Request-size middleware also limits `POST /uploads` to the configured file
 limit plus 64 KiB for multipart headers and form fields. Other API requests have
@@ -363,7 +378,7 @@ configuration, migrations, startup, replacement, and the repeatable smoke check.
 ## Usage
 
 ```text
-Register → Log in → Upload WAV → Create job → Poll status → Download stems
+Register → Log in → Upload audio → Create job → Poll status → Download stems
 ```
 
 ### 1. Register and Log In
@@ -396,11 +411,25 @@ Authorization: Bearer <access_token>
 
 Access tokens expire after 30 minutes by default. Log in again to obtain a new token.
 
-### 2. Upload a WAV File
+### 2. Upload an Audio File
 
 Send `POST /uploads` as multipart form data, using `audio_file` as the file field.
 
-The response contains the upload ID.
+Use the matching filename extension and multipart content type:
+
+| Extension | Canonical content type |
+| --- | --- |
+| `.wav` | `audio/wav` |
+| `.mp3` | `audio/mpeg` |
+| `.m4a` | `audio/mp4` |
+| `.aac` | `audio/aac` |
+| `.flac` | `audio/flac` |
+
+The browser gets these mappings from `/ui-info`, checks the filename/size and sends
+the canonical type even if the operating system reports an empty or different MIME
+type. The API still verifies the actual audio content. The response contains the
+upload ID, original filename and submitted content type; stored audio is always WAV.
+An upload does not create a separation job. URL imports are not supported.
 
 ### 3. Create a Processing Job
 

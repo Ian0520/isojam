@@ -17,6 +17,7 @@ def test_browser_assets_and_runtime_info_in_each_mode(
         registration_mode=registration_mode,
         max_upload_bytes=1024,
         max_audio_duration_seconds=30,
+        max_converted_audio_bytes=2048,
     )
     with TestClient(app) as client:
         page = client.get("/")
@@ -30,12 +31,21 @@ def test_browser_assets_and_runtime_info_in_each_mode(
         history_script = client.get("/static/history.js")
         assert history_script.status_code == 200
         assert "javascript" in history_script.headers["content-type"]
+        assert client.get("/static/uploads.js").status_code == 200
         assert client.get("/static/styles.css").status_code == 200
         assert client.get("/ui-info").json() == {
             "processing_mode": mode,
             "registration_mode": registration_mode,
             "max_upload_bytes": 1024,
             "max_audio_duration_seconds": 30,
+            "max_converted_audio_bytes": 2048,
+            "audio_upload_types": {
+                ".wav": "audio/wav",
+                ".mp3": "audio/mpeg",
+                ".m4a": "audio/mp4",
+                ".aac": "audio/aac",
+                ".flac": "audio/flac",
+            },
         }
         assert (
             client.get("/jobs/00000000-0000-0000-0000-000000000000").status_code == 401
@@ -44,7 +54,9 @@ def test_browser_assets_and_runtime_info_in_each_mode(
     assert fake_model_session.closed is (mode == "local")
 
 
-@pytest.mark.parametrize("asset", ["app.js", "auth.js", "history.js", "styles.css"])
+@pytest.mark.parametrize(
+    "asset", ["app.js", "auth.js", "history.js", "uploads.js", "styles.css"]
+)
 def test_browser_assets_require_revalidation_including_not_modified(client, asset):
     # The new URL also bypasses old entries cached before this policy existed.
     url = f"/static/{asset}?v=workspace"

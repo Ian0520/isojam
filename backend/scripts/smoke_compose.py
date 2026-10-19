@@ -42,6 +42,22 @@ uploads = [hashlib.sha256((Path('/var/lib/isojam/audio/uploads') / r[0]).read_by
 c.close()
 print(json.dumps(dict(jobs=jobs, outputs=outputs, uploads=uploads)))
 """
+UPLOAD_INFO = """
+import hashlib, json, sqlite3, sys, uuid
+from pathlib import Path
+import soundfile as sf
+c = sqlite3.connect('file:/var/lib/isojam/metadata/isojam.db?mode=ro', uri=True)
+row = c.execute('SELECT stored_filename, original_filename FROM uploads WHERE id=?',
+                (uuid.UUID(sys.argv[1]).hex,)).fetchone()
+c.close()
+directory = Path('/var/lib/isojam/audio/uploads')
+path = directory / row[0]
+info = sf.info(path)
+assert all(p.suffix == '.wav' for p in directory.iterdir())
+print(json.dumps(dict(stored=row[0], original=row[1], format=info.format,
+    subtype=info.subtype, rate=info.samplerate, channels=info.channels,
+    frames=info.frames, sha256=hashlib.sha256(path.read_bytes()).hexdigest())))
+"""
 
 
 def recording(seconds):
@@ -67,6 +83,12 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--api-image", default="isojam-api:local-stack")
     parser.add_argument("--processor-image", default="isojam-processor:local-stack")
+    parser.add_argument(
+        "--audio-format",
+        choices=["wav", "mp3"],
+        default="wav",
+        help="Generate a synthetic upload; MP3 also exercises API-side conversion",
+    )
     parser.add_argument(
         "--models-dir",
         type=Path,
@@ -212,11 +234,38 @@ def main():
 
         def submit(port, token, seconds, key):
             data = recording(seconds)
+            if args.audio_format == "mp3":
+                encoded = subprocess.run(
+                    [
+                        "docker",
+                        "exec",
+                        "-i",
+                        api_id,
+                        "ffmpeg",
+                        "-nostdin",
+                        "-v",
+                        "error",
+                        "-i",
+                        "pipe:0",
+                        "-c:a",
+                        "libmp3lame",
+                        "-f",
+                        "mp3",
+                        "pipe:1",
+                    ],
+                    input=data,
+                    capture_output=True,
+                    timeout=30,
+                    check=True,
+                )
+                data = encoded.stdout
+            filename = "synthetic." + args.audio_format
+            content_type = "audio/mpeg" if args.audio_format == "mp3" else "audio/wav"
             boundary = uuid.uuid4().hex
             body = (
                 (
-                    f'--{boundary}\r\nContent-Disposition: form-data; name="audio_file"; filename="synthetic.wav"\r\n'
-                    "Content-Type: audio/wav\r\n\r\n"
+                    f'--{boundary}\r\nContent-Disposition: form-data; name="audio_file"; filename="{filename}"\r\n'
+                    f"Content-Type: {content_type}\r\n\r\n"
                 ).encode()
                 + data
                 + f"\r\n--{boundary}--\r\n".encode()
@@ -230,8 +279,22 @@ def main():
                     "Authorization": "Bearer " + token,
                     "Content-Type": "multipart/form-data; boundary=" + boundary,
                 },
+                timeout=40,
             )
-            assert status == 200
+            assert status == 200, (status, uploaded)
+            assert uploaded["filename"] == filename
+            assert uploaded["content_type"] == content_type
+            stored = json.loads(
+                docker(
+                    "exec", api_id, "python", "-c", UPLOAD_INFO, uploaded["id"]
+                ).stdout
+            )
+            assert stored["original"] == filename and stored["stored"].endswith(".wav")
+            assert stored["format"] == "WAV" and stored["frames"] > 0
+            if args.audio_format == "mp3":
+                assert stored["subtype"] == "FLOAT" and stored["rate"] == 44100
+            else:
+                assert stored["sha256"] == hashlib.sha256(data).hexdigest()
             status, job = post_json(
                 port,
                 "/jobs",
@@ -239,7 +302,7 @@ def main():
                 {"Authorization": "Bearer " + token, "Idempotency-Key": key},
             )
             assert status == 200 and job["status"] == "pending"
-            return job["id"], hashlib.sha256(data).hexdigest()
+            return job["id"], stored["sha256"]
 
         try:
             service = start()

@@ -19,6 +19,9 @@ Use the [local Compose guide](local-stack.md) for coordinated API/processor star
 and shutdown. Remote control and storage remain later work.
 The image includes the browser at `/`. The displayed processing mode describes
 the API configuration; it does not prove that a processor is running.
+It also supplies FFmpeg and ffprobe for MP3, M4A, AAC and FLAC conversion before
+job creation. These system packages are installed by the Dockerfile; Python's
+dependency locks do not install them. Existing WAV uploads bypass conversion.
 
 The repository contains the recipe and application files. `docker build` creates
 an image in Docker's storage; `docker run` creates a container from that image and

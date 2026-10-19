@@ -5,6 +5,8 @@ from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.types import Scope
 
+from app.audio_conversion import get_audio_upload_types
+
 STATIC_DIR = Path(__file__).resolve().parents[1] / "static"
 router = APIRouter()
 
@@ -41,4 +43,6 @@ def ui_info(request: Request):
         "registration_mode": request.app.state.registration_mode,
         "max_upload_bytes": request.app.state.max_upload_bytes,
         "max_audio_duration_seconds": request.app.state.max_audio_duration_seconds,
+        "max_converted_audio_bytes": request.app.state.max_converted_audio_bytes,
+        "audio_upload_types": get_audio_upload_types(),
     }

@@ -10,7 +10,8 @@ and tradeoffs of those components.
 Start in `backend/app/routers/jobs.py` and `backend/app/static/app.js`.
 
 1. A user logs in; the browser sends a bearer access token on protected requests.
-2. The server authenticates the user, validates the WAV and stores owned upload metadata.
+2. The server authenticates the user, converts supported compressed formats to WAV,
+   validates the WAV and stores owned upload metadata.
 3. The browser creates an idempotency key before submitting a job. Job and receipt
    persist together; replaying the same accepted intent returns the existing job.
 4. Local mode schedules the real model as a background task. Queued mode only

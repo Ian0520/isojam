@@ -18,10 +18,10 @@ _conversion_slots = BoundedSemaphore(2)
 
 # suffix: (accepted MIME types, FFmpeg demuxer, accepted codecs)
 _FORMATS = {
-    ".mp3": ({"audio/mpeg", "audio/mp3"}, "mp3", {"mp3"}),
-    ".m4a": ({"audio/mp4", "audio/x-m4a", "audio/m4a"}, "mov", {"aac", "alac"}),
-    ".aac": ({"audio/aac", "audio/x-aac"}, "aac", {"aac"}),
-    ".flac": ({"audio/flac", "audio/x-flac"}, "flac", {"flac"}),
+    ".mp3": (("audio/mpeg", "audio/mp3"), "mp3", {"mp3"}),
+    ".m4a": (("audio/mp4", "audio/x-m4a", "audio/m4a"), "mov", {"aac", "alac"}),
+    ".aac": (("audio/aac", "audio/x-aac"), "aac", {"aac"}),
+    ".flac": (("audio/flac", "audio/x-flac"), "flac", {"flac"}),
 }
 
 
@@ -35,6 +35,14 @@ class ConversionBusyError(RuntimeError):
 
 class ConvertedAudioTooLargeError(ValueError):
     pass
+
+
+def get_audio_upload_types() -> dict[str, str]:
+    """Canonical multipart types for browser uploads; decoding still verifies content."""
+    return {
+        ".wav": "audio/wav",
+        **{suffix: info[0][0] for suffix, info in _FORMATS.items()},
+    }
 
 
 def supports_audio_upload(filename: str | None, content_type: str | None) -> bool:

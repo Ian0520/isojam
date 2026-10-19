@@ -5,7 +5,9 @@ triggered run is also available in GitHub Actions. The workflow has read-only
 repository permissions and needs no application secrets or GPU.
 
 The pipeline checks browser JavaScript modules with Node 24 and runs the
-authentication and history tests using Node's built-in test runner. Authentication
+authentication, upload and history tests using Node's built-in test runner. Upload
+checks cover supported formats, canonical multipart types, preserved filenames/bytes,
+empty/oversized files and validation before submission. Authentication
 checks cover invitation submission, login-only requests, generic rejection,
 incomplete responses and recovery when registration succeeds but automatic login
 fails. History checks cover cursor
@@ -18,6 +20,9 @@ runtime UID/GID 10001. Source is mounted read-only. Tests use temporary metadata
 and audio storage; the actual project database and container settings are unused.
 The two original generated migrations are excluded from formatting/lint checks;
 all maintained application, test, script and migration files are checked.
+The checker requires FFmpeg and ffprobe in the API image so real format conversion
+tests cannot silently skip in CI. Native test runs without those tools may skip
+the real-codec cases.
 
 The runtime image never gains test tools. They are installed in a separate
 container that is removed after it exits. Python, operating-system image and
@@ -41,7 +46,7 @@ is also checked as closed. The raw code is kept out of smoke output.
 
 A separate Compose smoke runs the API and processor in different containers with
 an explicit CPU fake-worker override. It checks migration ordering, API admission,
-graceful shutdown, original-attempt persistence and exact downloads after both
+MP3 upload/conversion, graceful shutdown, original-attempt persistence and exact downloads after both
 containers are recreated. Each run owns and removes its own Compose project and
 volumes. The real GPU version is described in [local stack](local-stack.md).
 
@@ -54,12 +59,13 @@ From the repository root with Docker running:
 node --check backend/app/static/app.js
 node --check backend/app/static/auth.js
 node --check backend/app/static/history.js
-node --test backend/tests/test_auth_browser.mjs backend/tests/test_job_history_browser.mjs
+node --check backend/app/static/uploads.js
+node --test backend/tests/test_auth_browser.mjs backend/tests/test_upload_browser.mjs backend/tests/test_job_history_browser.mjs
 docker build --platform linux/amd64 -t isojam-api:ci backend
 python3 backend/scripts/check_container.py --image isojam-api:ci
 python3 backend/scripts/smoke_container.py --image isojam-api:ci
 python3 backend/scripts/smoke_container.py --image isojam-api:ci --processing-mode queued --dispatch-fake-worker --recover-publication
-python3 backend/scripts/smoke_compose.py --api-image isojam-api:ci
+python3 backend/scripts/smoke_compose.py --api-image isojam-api:ci --audio-format mp3
 ```
 
 A failed check exits nonzero and fails the GitHub job. Inspect the first failing

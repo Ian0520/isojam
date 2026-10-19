@@ -64,7 +64,7 @@ it fails with a useful error if files are missing or damaged.
 
 Migrations must succeed before the processor starts. The processor must pass its
 GPU/cache preflight before the API starts. Open <http://127.0.0.1:8000/> and upload
-a short WAV after creating an account to try real processing. The terminal shows
+a short WAV, MP3, M4A, AAC or FLAC after creating an account to try real processing. The terminal shows
 both services' logs. The example `.env` opens registration; the application
 otherwise defaults to `closed`. See
 [registration configuration](configuration.md#configure-registration).
@@ -163,7 +163,7 @@ The CPU check exercises Compose ordering, real API requests, a clearly substitut
 fake worker, graceful stop, volume persistence and container replacement:
 
 ```bash
-python3 backend/scripts/smoke_compose.py --api-image isojam-api:local-stack
+python3 backend/scripts/smoke_compose.py --api-image isojam-api:local-stack --audio-format mp3
 ```
 
 To exercise the real GPU image instead, supply an existing model-cache directory
@@ -174,16 +174,21 @@ downloaded into or modified by this smoke:
 python3 backend/scripts/smoke_compose.py \
   --api-image isojam-api:local-stack \
   --processor-image isojam-processor:local-stack \
+  --audio-format mp3 \
   --models-dir "$HOME/.cache/bs-roformer-infer"
 ```
 
-The real check submits original synthetic audio, requests Compose shutdown during
+The real check generates synthetic audio, requests Compose shutdown during
 inference with another job queued, and verifies the active result finishes with
 saved exit proof while the next job stays pending. Recreated containers retain
-login, the original attempt, input bytes and seven exact downloads, then process
+login, the original attempt, stored WAV bytes and seven exact downloads, then process
 the remaining job. Both modes use a unique Compose project, a generated test
 secret and fresh volumes, and remove only those resources afterward. They do not
 use `.env`, personal recordings or the normal stack's data.
+With `--audio-format mp3`, FFmpeg in the API container encodes the synthetic fixture;
+the HTTP upload then exercises decoding, validates the stored floating-point WAV,
+and checks that no compressed temporary uploads remain. The default `wav` option
+retains the original WAV byte-preservation check. No host FFmpeg is required.
 
 The existing [real model service smoke](model-worker.md#real-service-verification-on-2026-10-17)
 can also run inside the GPU image to check interrupted-worker handling. CPU CI cannot
@@ -214,3 +219,24 @@ The complete CPU suite passed all 1,378 tests, including 26 processor tests, in
 378.97 seconds under locked dependencies as UID/GID 10001. Ruff lint and formatting
 checks passed across all 109 maintained Python files. The run reported fifteen
 existing SQLAlchemy `Result.tuples()` deprecation warnings in job-history tests.
+
+## Audio import verification recorded on 2026-10-19
+
+The API image includes FFmpeg/ffprobe and packages the browser upload module.
+All 31 browser controller tests passed, including format selection, canonical
+multipart types and byte limits. The standalone disabled and queued API smokes
+passed, including existing WAV preservation and publication recovery.
+
+Both the CPU test-worker and real GPU Compose checks passed with `--audio-format mp3`.
+The API converted generated MP3 uploads to floating-point 44.1 kHz WAV and removed
+the compressed temporary files. During real inference, shutdown completed the active
+job with stop proof while leaving the next job pending. Replacement preserved the
+stored WAV hash, original attempt, account and seven exact authenticated downloads,
+then completed the queued job. Checks used separate disposable data, read-only cached
+models and the RTX 4060 Laptop GPU; the normal local stack was left running.
+Synthetic tones check the processing path and lifecycle, not separation quality.
+
+The CPU image supplied Debian FFmpeg/ffprobe 5.1.9. Its locked Python suite passed
+all 1,437 tests without skips in 535.20 seconds as UID/GID 10001; the fifteen existing
+SQLAlchemy job-history deprecation warnings remain. Ruff lint and formatting passed
+for all 111 maintained Python files.

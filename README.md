@@ -2,7 +2,7 @@
 
 [![Backend CI](https://github.com/Ian0520/isojam/actions/workflows/backend.yml/badge.svg)](https://github.com/Ian0520/isojam/actions/workflows/backend.yml)
 
-**Turn songs into practice tracks.** Upload a WAV recording, separate its
+**Turn songs into practice tracks.** Upload a WAV, MP3, M4A, AAC or FLAC recording, separate its
 instruments with BS-RoFormer, then preview or download the tracks in your browser.
 
 IsoJam runs locally with a CPU API and a separate NVIDIA GPU processor. It uses
@@ -104,8 +104,10 @@ If you changed `ISOJAM_PORT` in `.env`, use that port instead.
 1. Select **Create account**, enter your email and password, then submit.
    Successful registration signs you in automatically. If automatic sign-in
    fails after account creation, use **Sign in** with those credentials.
-2. Choose a short WAV and select **Separate audio**. Defaults allow up to
-   200 MiB and 10 minutes of readable mono or stereo audio.
+2. Choose a short WAV, MP3, M4A, AAC or FLAC file and select **Separate audio**.
+   Defaults allow up to 200 MiB and 10 minutes of readable mono or stereo audio.
+   The API converts the additional formats to WAV before queuing separation;
+   converted files have a separate 256 MiB limit. FFmpeg is included in the API image.
 3. The upload form collapses and the recording moves through queued/processing
    to completed. The model loads in the processor's worker for each job.
 4. Use **Preview** to listen to an individual track or **Download** to save its
@@ -234,7 +236,7 @@ python3 backend/scripts/check_container.py --image isojam-api:ci
 
 This checks lint, formatting and the Python suite with locked tools in a
 disposable container as the runtime user. GitHub Actions also checks browser
-JavaScript and runs authentication/history tests and HTTP/container lifecycle
+JavaScript and runs authentication/upload/history tests and HTTP/container lifecycle
 smokes. The [CI guide](docs/ci.md#run-the-same-checks-locally) lists the complete
 commands. CPU checks use explicit test workers; real GPU verification is recorded
 separately in the [local stack guide](docs/local-stack.md#verification-recorded-on-2026-10-18).
@@ -249,6 +251,7 @@ retention or backup policy.
 Browser access tokens are tab-scoped, expire after 30 minutes and have no refresh
 flow. Preview downloads the whole authenticated WAV before playback. Custom
 backing-track mixing, looping and speed adjustment are not implemented.
+Uploads accept local audio files; YouTube and other URL imports are not implemented.
 
 The queue favors avoiding duplicate execution when a worker's exit is uncertain.
 Automatic inference retry of uncertain attempts is not supported. A successful

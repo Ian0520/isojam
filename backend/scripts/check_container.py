@@ -2,6 +2,7 @@
 
 import argparse
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -39,6 +40,9 @@ def run_inside() -> None:
         os.setgid(10001)
         os.setuid(10001)
         print(f"Checks run as UID/GID {os.getuid()}/{os.getgid()}", flush=True)
+        for executable in ("ffmpeg", "ffprobe"):
+            if shutil.which(executable) is None:
+                raise RuntimeError(f"The API image must supply {executable}")
         paths = ["app", "tests", "scripts", "migrations"]
         for args in (
             ["ruff", "check", "--no-cache", "--extend-exclude", LEGACY_MIGRATIONS],

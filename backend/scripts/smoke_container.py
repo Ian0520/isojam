@@ -34,7 +34,7 @@ def owns_resource(kind, name, marker):
     return result.returncode == 0 and result.stdout.strip() == marker
 
 
-def request(port, method, path, data=None, headers=None):
+def request(port, method, path, data=None, headers=None, *, timeout=3):
     req = Request(
         f"http://127.0.0.1:{port}{path}",
         data=data,
@@ -42,7 +42,7 @@ def request(port, method, path, data=None, headers=None):
         method=method,
     )
     try:
-        with urlopen(req, timeout=3) as response:
+        with urlopen(req, timeout=timeout) as response:
             return response.status, json.load(response)
     except HTTPError as error:
         with error:
@@ -81,6 +81,7 @@ def verify_browser_assets(port, processing_mode, registration_mode):
         ("/static/app.js", "javascript"),
         ("/static/auth.js", "javascript"),
         ("/static/history.js", "javascript"),
+        ("/static/uploads.js", "javascript"),
         ("/static/styles.css", "text/css"),
     ):
         with urlopen(f"http://127.0.0.1:{port}{path}", timeout=3) as response:
@@ -159,10 +160,12 @@ def main():
 import importlib.metadata
 import importlib.util
 import os
+import shutil
 from pathlib import Path
 import re
 
 assert os.getuid() == 10001
+assert shutil.which('ffmpeg') and shutil.which('ffprobe')
 assert os.environ['ISOJAM_PROCESSING_MODE'] in {'disabled', 'queued'}
 from app.config import get_registration_mode
 assert get_registration_mode() == 'closed'
