@@ -13,7 +13,14 @@ from app.audio_conversion import (
     ConversionUnavailableError,
     ConvertedAudioTooLargeError,
     convert_to_wav,
+    get_audio_upload_types,
+    supports_audio_upload,
 )
+
+
+def test_internal_webm_support_is_not_advertised_or_accepted_as_an_upload():
+    assert ".webm" not in get_audio_upload_types()
+    assert not supports_audio_upload("recording.webm", "audio/webm")
 
 
 @pytest.mark.parametrize("suffix", [".mp3", ".m4a", ".aac", ".flac"])

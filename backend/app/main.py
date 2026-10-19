@@ -10,15 +10,19 @@ from app.config import (
     get_jwt_secret_key,
     get_max_audio_duration_seconds,
     get_max_converted_audio_bytes,
+    get_max_unfinished_imports,
+    get_max_unfinished_imports_per_user,
     get_max_unfinished_jobs_per_user,
     get_max_upload_bytes,
     get_processing_mode,
     get_registration_mode,
+    get_youtube_imports_enabled,
 )
 from app.database import SessionLocal
 from app.middleware import RequestSizeLimitMiddleware
 from app.model import create_model_session
 from app.routers.auth import router as auth_router
+from app.routers.imports import router as imports_router
 from app.routers.jobs import router as jobs_router
 from app.routers.uploads import router as uploads_router
 from app.routers.web import STATIC_DIR, RevalidatingStaticFiles
@@ -36,7 +40,21 @@ def create_app(
     processing_mode: str | None = None,
     registration_mode: str | None = None,
     max_converted_audio_bytes: int | None = None,
+    youtube_imports_enabled: bool | None = None,
+    max_unfinished_imports_per_user: int | None = None,
+    max_unfinished_imports: int | None = None,
 ):
+    if (
+        youtube_imports_enabled is not None
+        and type(youtube_imports_enabled) is not bool
+    ):
+        raise ValueError("youtube_imports_enabled must be a boolean")
+    for name, value in (
+        ("max_unfinished_imports_per_user", max_unfinished_imports_per_user),
+        ("max_unfinished_imports", max_unfinished_imports),
+    ):
+        if value is not None and (type(value) is not int or value <= 0):
+            raise ValueError(f"{name} must be a positive integer")
     if max_upload_bytes is not None and (
         type(max_upload_bytes) is not int or max_upload_bytes <= 0
     ):
@@ -93,6 +111,21 @@ def create_app(
             if registration_mode is not None
             else get_registration_mode()
         )
+        app.state.youtube_imports_enabled = (
+            youtube_imports_enabled
+            if youtube_imports_enabled is not None
+            else get_youtube_imports_enabled()
+        )
+        app.state.max_unfinished_imports_per_user = (
+            max_unfinished_imports_per_user
+            if max_unfinished_imports_per_user is not None
+            else get_max_unfinished_imports_per_user()
+        )
+        app.state.max_unfinished_imports = (
+            max_unfinished_imports
+            if max_unfinished_imports is not None
+            else get_max_unfinished_imports()
+        )
         session = (
             model_session_factory() if app.state.processing_mode == "local" else None
         )
@@ -116,6 +149,7 @@ def create_app(
     app.include_router(uploads_router)
 
     app.include_router(jobs_router)
+    app.include_router(imports_router)
     app.include_router(auth_router)
     app.include_router(web_router)
     app.mount("/static", RevalidatingStaticFiles(directory=STATIC_DIR), name="static")

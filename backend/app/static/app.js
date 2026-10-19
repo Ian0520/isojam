@@ -1,6 +1,7 @@
 import { authenticate } from "./auth.js?v=workspace";
 import { JobHistory } from "./history.js?v=workspace";
 import { audioUploadBody, validateAudioFile } from "./uploads.js?v=audio-imports";
+import { YouTubeImports, importFailure } from "./imports.js?v=youtube-imports";
 
 const $ = (id) => document.getElementById(id);
 const storage = {
@@ -39,6 +40,8 @@ const state = {
   file: null,
   uploadId: null,
   key: null,
+  source: "file",
+  importViewEpoch: 0,
   accepted: false,
   job: null,
   jobName: null,
@@ -59,6 +62,7 @@ const stemOrder = [
 ];
 class CancelledOperation extends Error {}
 const jobHistory = new JobHistory(jsonRequest, renderHistory);
+const youtubeImports = new YouTubeImports(jsonRequest, renderImports, acceptImportedJob, storage);
 const historyDateFormat = new Intl.DateTimeFormat(undefined, {
   year: "numeric",
   month: "short",
@@ -103,6 +107,12 @@ function clearJob() {
   $("job-status").hidden = true;
   clearPreview();
 }
+function clearSelectedFile() {
+  state.file = null;
+  $("audio-file").value = "";
+  $("file-name").textContent = "Choose an audio file";
+  $("file-detail").textContent = "WAV, MP3, M4A, AAC or FLAC";
+}
 function clearSession() {
   state.epoch += 1;
   state.token = null;
@@ -111,20 +121,20 @@ function clearSession() {
   state.busy = false;
   state.authBusy = false;
   state.downloading = false;
+  youtubeImports.connect(null);
   for (const key of ["token", "email", "job"]) storage.remove(key);
   for (const url of state.downloadUrls) URL.revokeObjectURL(url);
   state.downloadUrls.clear();
   clearJob();
   jobHistory.clear();
-  state.file = null;
-  $("audio-file").value = "";
-  $("file-name").textContent = "Choose an audio file";
-  $("file-detail").textContent = "WAV, MP3, M4A, AAC or FLAC";
+  clearSelectedFile();
   $("resume-id").value = "";
   $("job-id-lookup").open = false;
   $("signed-in").open = false;
   $("password").value = "";
   $("invitation-code").value = "";
+  $("youtube-url").value = "";
+  state.source = "file";
   state.authMode = "login";
   updateControls();
 }
@@ -138,6 +148,16 @@ function updateControls() {
     registering && state.info?.registration_mode === "invite";
   const active =
     state.job && ["pending", "processing"].includes(state.job.status);
+  const importing = youtubeImports.active;
+  const canImport = state.info?.youtube_imports_enabled;
+  const hasImports = youtubeImports.intent || youtubeImports.item || youtubeImports.items.length;
+  $("source-tabs").hidden = !canImport && !hasImports;
+  $("upload-form").hidden = state.source !== "file";
+  $("youtube-panel").hidden = state.source !== "youtube";
+  $("file-source").setAttribute("aria-pressed", String(state.source === "file"));
+  $("youtube-source").setAttribute("aria-pressed", String(state.source === "youtube"));
+  $("file-source").disabled = state.busy || importing;
+  $("youtube-source").disabled = state.busy || importing;
   $("signed-in").hidden = !signedIn;
   $("signed-out").hidden = signedIn;
   $("account-panel").hidden = signedIn;
@@ -175,6 +195,7 @@ function updateControls() {
     !signedIn ||
     !state.info ||
     state.busy ||
+    importing ||
     Boolean(active) ||
     state.info?.processing_mode === "disabled";
   $("separate").disabled =
@@ -183,6 +204,7 @@ function updateControls() {
     !state.info ||
     state.info.processing_mode === "disabled" ||
     state.busy ||
+    importing ||
     Boolean(active) ||
     state.accepted;
   $("separate").textContent = state.busy
@@ -192,19 +214,155 @@ function updateControls() {
       : state.uploadId
         ? "Retry submission"
         : "Separate audio";
-  $("resume-submit").disabled = !signedIn || state.busy;
+  const importUnavailable = !signedIn || !state.info || state.busy || Boolean(active) ||
+    state.info.processing_mode === "disabled";
+  $("youtube-url").disabled = importUnavailable || importing ||
+    (!canImport && !youtubeImports.intent);
+  $("youtube-submit").disabled = importUnavailable || youtubeImports.busy ||
+    (!canImport && !youtubeImports.intent) || !$("youtube-url").value.trim() ||
+    (importing && !youtubeImports.error) || youtubeImports.phase === "submitted";
+  $("youtube-submit").textContent = youtubeImports.error
+    ? youtubeImports.item?.status === "ready" ? "Retry separation" : "Retry import"
+    : youtubeImports.phase === "failed" ? "Try import again"
+      : youtubeImports.phase === "submitted" ? "Submitted"
+      : youtubeImports.phase === "creating-job" ? "Submitting…"
+        : importing ? "Preparing audio…" : "Separate audio";
+  $("youtube-availability").hidden = Boolean(canImport);
+  $("youtube-availability").textContent = "New YouTube imports are unavailable. Existing imports can still be opened.";
+  $("youtube-recent").hidden = !signedIn;
+  $("youtube-open-job").hidden = !youtubeImports.job || youtubeImports.job.id === state.job?.id;
+  $("youtube-refresh").disabled = !signedIn || youtubeImports.loading;
+  $("resume-submit").disabled = !signedIn || state.busy || youtubeImports.busy;
   $("history-refresh").hidden = !signedIn;
   $("history-refresh").disabled = jobHistory.loading;
   $("history-more").hidden = !signedIn || !jobHistory.nextCursor;
   $("history-more").disabled = jobHistory.loading;
   $("history-more").textContent = jobHistory.loading ? "Loading…" : "Load more";
   for (const button of document.querySelectorAll(".history-job")) {
-    button.disabled = !signedIn || state.busy;
+    button.disabled = !signedIn || state.busy || youtubeImports.busy;
     if (button.dataset.jobId === state.job?.id)
       button.setAttribute("aria-current", "true");
     else button.removeAttribute("aria-current");
   }
+  for (const button of document.querySelectorAll(".import-list button"))
+    button.disabled = importUnavailable || youtubeImports.busy ||
+      (!canImport && button.dataset.importStatus === "failed") ||
+      (importing && button.dataset.importId !== youtubeImports.item?.id);
 }
+
+function renderImports() {
+  const current = youtubeImports;
+  if (current.intent && (current.active || !$("youtube-url").value))
+    $("youtube-url").value = current.intent.url;
+  $("youtube-progress").hidden = current.phase === "idle";
+  $("youtube-progress").classList.toggle("error", Boolean(current.error) || current.phase === "failed");
+  $("youtube-status").textContent = {
+    submitting: "Requesting audio", pending: "Waiting to prepare audio",
+    processing: "Downloading and preparing audio", ready: "Audio ready",
+    "creating-job": "Queuing separation", submitted: "Audio prepared",
+    rejected: "Import could not be accepted", failed: "Import failed",
+  }[current.phase] || "";
+  $("youtube-message").textContent = current.error || (current.phase === "failed"
+    ? importFailure(current.item?.error_code)
+    : {
+      submitting: "Submitting your link. Retrying will check the same request.",
+      pending: "Waiting for the audio importer. Separation follows once the audio is ready.",
+      processing: "Downloading the audio, converting it to WAV and checking it before separation.",
+      ready: "The audio is prepared. Retry separation when the processor is available.",
+      "creating-job": "The audio is ready. Sending it for instrument separation.",
+      submitted: "Follow separation progress in your recording. You can reopen it from Recent recordings.",
+    }[current.phase] || "");
+  $("youtube-indicator").hidden = !current.active || Boolean(current.error);
+  $("youtube-reset").hidden = current.busy ||
+    !["failed", "rejected", "submitted", "ready"].includes(current.phase);
+  $("youtube-open-job").hidden = !current.job || current.job.id === state.job?.id;
+  const focusedId = document.activeElement?.dataset.importId;
+  const list = $("youtube-imports");
+  list.replaceChildren();
+  list.setAttribute("aria-busy", String(current.loading));
+  for (const item of current.items) {
+    const row = document.createElement("li");
+    const button = document.createElement("button");
+    button.type = "button";
+    button.dataset.importId = item.id;
+    button.dataset.importStatus = item.status;
+    const name = document.createElement("span");
+    name.className = "import-name";
+    name.textContent = item.filename || `YouTube · ${item.video_id}`;
+    const status = document.createElement("span");
+    status.className = "muted";
+    status.textContent = { ready: "Continue", failed: "Retry import", pending: "Waiting", processing: "Preparing" }[item.status];
+    button.append(name, status);
+    button.addEventListener("click", () => beginImport(() => item.status === "failed"
+      ? youtubeImports.start(`https://www.youtube.com/watch?v=${item.video_id}`)
+      : youtubeImports.open(item)));
+    row.append(button);
+    list.append(row);
+    if (item.id === focusedId) button.focus({ preventScroll: true });
+  }
+  $("youtube-list-message").textContent = current.listError || (current.loading
+    ? "Loading imports…" : !current.items.length ? "No YouTube imports yet." : "");
+  $("youtube-list-message").hidden = !$("youtube-list-message").textContent;
+  updateControls();
+}
+
+function connectImports() {
+  youtubeImports.connect(state.token ? state.email : null);
+  if (youtubeImports.intent) state.source = "youtube";
+  state.importViewEpoch = state.jobEpoch;
+  youtubeImports.restore();
+  updateControls();
+}
+
+function beginImport(operation) {
+  if (!state.token || state.busy || youtubeImports.busy ||
+      ["pending", "processing"].includes(state.job?.status)) return;
+  state.source = "youtube";
+  clearJob();
+  clearSelectedFile();
+  state.importViewEpoch = state.jobEpoch;
+  notice("");
+  operation();
+}
+
+function acceptImportedJob(job, item) {
+  jobHistory.load();
+  // Keep an explicitly selected history recording in view while import finishes.
+  if (state.jobEpoch !== state.importViewEpoch) return;
+  clearSelectedFile();
+  state.accepted = true;
+  state.uploadId = item.upload_id;
+  state.jobEpoch += 1;
+  showJob(job);
+  state.jobName = item.filename;
+  updateRecordingTitle();
+  notice("");
+  schedulePoll();
+}
+
+$("file-source").addEventListener("click", () => {
+  if (!youtubeImports.active && !state.busy) { state.source = "file"; updateControls(); }
+});
+$("youtube-source").addEventListener("click", () => {
+  if (!state.busy) { state.source = "youtube"; updateControls(); }
+});
+$("youtube-url").addEventListener("input", () => {
+  if (youtubeImports.phase === "submitted") youtubeImports.reset();
+  updateControls();
+});
+$("youtube-form").addEventListener("submit", (event) => {
+  event.preventDefault();
+  if (!$("youtube-submit").disabled)
+    beginImport(() => youtubeImports.start($("youtube-url").value));
+});
+$("youtube-reset").addEventListener("click", () => {
+  youtubeImports.reset();
+  if (youtubeImports.phase === "idle") { $("youtube-url").value = ""; updateControls(); }
+});
+$("youtube-open-job").addEventListener("click", () => {
+  if (youtubeImports.job) openSession(youtubeImports.job.id);
+});
+$("youtube-refresh").addEventListener("click", () => youtubeImports.refresh());
 
 function renderHistory() {
   const focusedId = document.activeElement?.dataset.jobId;
@@ -266,10 +424,10 @@ $("history-more").addEventListener("click", () => {
   if (state.token) jobHistory.load({ more: true });
 });
 
-async function jsonRequest(path, { method = "GET", body, auth = true } = {}) {
+async function jsonRequest(path, { method = "GET", body, auth = true, headers: customHeaders = {} } = {}) {
   const token = state.token;
   const epoch = state.epoch;
-  const headers = {};
+  const headers = { ...customHeaders };
   if (auth && token) headers.Authorization = `Bearer ${token}`;
   if (body && !(body instanceof FormData)) {
     headers["Content-Type"] = "application/json";
@@ -298,11 +456,13 @@ async function jsonRequest(path, { method = "GET", body, auth = true } = {}) {
     const detail = Array.isArray(data.detail)
       ? data.detail.map((item) => item.msg).join(". ")
       : data.detail;
-    throw new Error(
+    const error = new Error(
       typeof detail === "string"
         ? detail
         : `Request failed (${response.status}).`,
     );
+    error.status = response.status;
+    throw error;
   }
   return data;
 }
@@ -364,6 +524,7 @@ $("auth-form").addEventListener("submit", async (event) => {
     $("password").value = "";
     notice("");
     jobHistory.load();
+    connectImports();
   } catch (error) {
     report(error, epoch);
   } finally {
@@ -375,9 +536,10 @@ $("auth-form").addEventListener("submit", async (event) => {
 });
 $("logout").addEventListener("click", () => {
   clearSession();
-  notice("Signed out. Submitted recordings continue processing.");
+  notice("Signed out. Accepted work continues in the background.");
 });
 $("audio-file").addEventListener("change", () => {
+  if (youtubeImports.active) return;
   clearJob();
   state.savedJob = null;
   storage.remove("job");
@@ -407,6 +569,7 @@ $("upload-form").addEventListener("submit", async (event) => {
     !state.info ||
     state.info.processing_mode === "disabled" ||
     state.busy ||
+    youtubeImports.active ||
     state.accepted ||
     ["pending", "processing"].includes(state.job?.status)
   )
@@ -694,15 +857,17 @@ async function initialize() {
     $("mode-note").textContent = {
       local: "Separate a recording into individual instrument tracks.",
       queued:
-        "Separate a recording into instrument tracks. Processing continues if you leave this page.",
+        "Separate a recording into instrument tracks. Queued separation continues if you leave this page.",
       disabled:
         "New separation is unavailable. Sign in to preview or download your saved tracks.",
     }[mode];
     $("audio-file").accept = Object.keys(state.info.audio_upload_types).join(",");
     $("upload-limits").textContent =
       `Up to ${Math.floor(state.info.max_upload_bytes / 1024 / 1024)} MiB · ${Math.floor(state.info.max_audio_duration_seconds / 60)} min · mono or stereo`;
+    $("youtube-limits").textContent = $("upload-limits").textContent;
     updateControls();
     if (state.token && state.savedJob) await openSession(state.savedJob);
+    connectImports();
   } catch (error) {
     $("service-status").textContent = "Service unavailable";
     notice(error.message, true);
@@ -711,10 +876,11 @@ async function initialize() {
 window.addEventListener("pagehide", () => {
   $("invitation-code").value = "";
   clearTimeout(state.timer);
+  youtubeImports.pause();
   clearPreview();
   for (const url of state.downloadUrls) URL.revokeObjectURL(url);
 });
 window.addEventListener("pageshow", (event) => {
-  if (event.persisted) schedulePoll();
+  if (event.persisted) { schedulePoll(); youtubeImports.restore(); }
 });
 initialize();

@@ -60,17 +60,25 @@ node --check backend/app/static/app.js
 node --check backend/app/static/auth.js
 node --check backend/app/static/history.js
 node --check backend/app/static/uploads.js
-node --test backend/tests/test_auth_browser.mjs backend/tests/test_upload_browser.mjs backend/tests/test_job_history_browser.mjs
+node --check backend/app/static/imports.js
+node --test backend/tests/test_*_browser.mjs
 docker build --platform linux/amd64 -t isojam-api:ci backend
+docker build --platform linux/amd64 -f backend/Dockerfile.youtube -t isojam-youtube:ci backend
 python3 backend/scripts/check_container.py --image isojam-api:ci
 python3 backend/scripts/smoke_container.py --image isojam-api:ci
 python3 backend/scripts/smoke_container.py --image isojam-api:ci --processing-mode queued --dispatch-fake-worker --recover-publication
-python3 backend/scripts/smoke_compose.py --api-image isojam-api:ci --audio-format mp3
+python3 backend/scripts/smoke_compose.py --api-image isojam-api:ci --import-image isojam-youtube:ci --audio-format mp3
 ```
 
 A failed check exits nonzero and fails the GitHub job. Inspect the first failing
 step and reproduce its command locally. Container checks print the actual test
 UID/GID. The CPU suite does not prove GPU or hosted-provider compatibility.
+
+Browser checks cover import retries, account isolation, reload recovery and the
+handoff to separation. Page tests execute the actual module against the HTML's
+element IDs with controlled HTTP responses. Real-browser layout checks and the
+[opt-in live YouTube check](youtube-imports.md#dependency-maintenance-and-checks)
+remain separate from deterministic CI tests.
 
 ## Delivery boundary
 

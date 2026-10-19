@@ -1,4 +1,4 @@
-"""Regenerate Linux/Python 3.12 CPU locks or GPU additions."""
+"""Regenerate Linux/Python 3.12 CPU locks or optional runtime additions."""
 
 import argparse
 import os
@@ -14,10 +14,16 @@ def main():
     parser.add_argument(
         "--upgrade", action="store_true", help="Resolve newer compatible versions."
     )
-    parser.add_argument(
+    additions = parser.add_mutually_exclusive_group()
+    additions.add_argument(
         "--gpu",
         action="store_true",
         help="Generate GPU additions constrained by the API lock.",
+    )
+    additions.add_argument(
+        "--youtube",
+        action="store_true",
+        help="Generate YouTube importer additions constrained by the API lock.",
     )
     args = parser.parse_args()
     if (
@@ -40,6 +46,8 @@ def main():
     command = "python scripts/compile_requirements.py"
     if args.gpu:
         command += " --gpu"
+    elif args.youtube:
+        command += " --youtube"
     if args.upgrade:
         command += " --upgrade"
     env["CUSTOM_COMPILE_COMMAND"] = command
@@ -56,8 +64,13 @@ def main():
     ]
     if args.upgrade:
         common.append("--upgrade")
-    if args.gpu:
-        for name in ("requirements-gpu", "requirements-gpu-build"):
+    if args.gpu or args.youtube:
+        names = (
+            ("requirements-gpu", "requirements-gpu-build")
+            if args.gpu
+            else ("requirements-youtube",)
+        )
+        for name in names:
             subprocess.run(
                 [*common, "--output-file", name + ".txt", name + ".in"],
                 cwd=backend,

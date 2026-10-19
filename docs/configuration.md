@@ -8,6 +8,11 @@ migrations and processor; you do not need the native installation below to use i
 
 ## Setup
 
+For YouTube URL imports, see the [background import API and worker](youtube-imports.md).
+The Compose stack includes the separate CPU importer. Native API admission defaults
+to disabled (`ISOJAM_YOUTUBE_IMPORTS_ENABLED=0`); the importer has its own locked
+downloader environment and does not run in the HTTP process.
+
 This section starts the application directly in a Python environment on
 Ubuntu/WSL2. Its environment variables and data are separate from Compose.
 The root `.env` is read by Compose; native Python commands do not load it
@@ -429,7 +434,8 @@ The browser gets these mappings from `/ui-info`, checks the filename/size and se
 the canonical type even if the operating system reports an empty or different MIME
 type. The API still verifies the actual audio content. The response contains the
 upload ID, original filename and submitted content type; stored audio is always WAV.
-An upload does not create a separation job. URL imports are not supported.
+An upload does not create a separation job. YouTube URLs use the separate
+[`POST /imports` workflow](youtube-imports.md); `/uploads` accepts multipart files.
 
 ### 3. Create a Processing Job
 

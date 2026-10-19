@@ -7,6 +7,8 @@ DEFAULT_MAX_UPLOAD_BYTES = 200 * 1024 * 1024
 DEFAULT_MAX_CONVERTED_AUDIO_BYTES = 256 * 1024 * 1024
 DEFAULT_MAX_AUDIO_DURATION_SECONDS = 10 * 60
 DEFAULT_MAX_UNFINISHED_JOBS_PER_USER = 2
+DEFAULT_MAX_UNFINISHED_IMPORTS_PER_USER = 1
+DEFAULT_MAX_UNFINISHED_IMPORTS = 8
 PROCESSING_MODES = ("local", "disabled", "queued")
 REGISTRATION_MODES = ("open", "closed", "invite")
 
@@ -48,6 +50,26 @@ def get_max_audio_duration_seconds() -> int:
 def get_max_unfinished_jobs_per_user() -> int:
     return _get_positive_int(
         "ISOJAM_MAX_UNFINISHED_JOBS_PER_USER", DEFAULT_MAX_UNFINISHED_JOBS_PER_USER
+    )
+
+
+def get_youtube_imports_enabled() -> bool:
+    value = os.environ.get("ISOJAM_YOUTUBE_IMPORTS_ENABLED", "0")
+    if value not in {"0", "1"}:
+        raise RuntimeError("ISOJAM_YOUTUBE_IMPORTS_ENABLED must be '0' or '1'")
+    return value == "1"
+
+
+def get_max_unfinished_imports_per_user() -> int:
+    return _get_positive_int(
+        "ISOJAM_MAX_UNFINISHED_IMPORTS_PER_USER",
+        DEFAULT_MAX_UNFINISHED_IMPORTS_PER_USER,
+    )
+
+
+def get_max_unfinished_imports() -> int:
+    return _get_positive_int(
+        "ISOJAM_MAX_UNFINISHED_IMPORTS", DEFAULT_MAX_UNFINISHED_IMPORTS
     )
 
 

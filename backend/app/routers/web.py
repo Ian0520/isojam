@@ -45,4 +45,5 @@ def ui_info(request: Request):
         "max_audio_duration_seconds": request.app.state.max_audio_duration_seconds,
         "max_converted_audio_bytes": request.app.state.max_converted_audio_bytes,
         "audio_upload_types": get_audio_upload_types(),
+        "youtube_imports_enabled": request.app.state.youtube_imports_enabled,
     }

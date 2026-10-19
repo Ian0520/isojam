@@ -22,6 +22,7 @@ def test_upgrade_head_creates_current_schema(tmp_path, monkeypatch):
         "job_attempts",
         "job_submission_receipts",
         "registration_invitations",
+        "audio_imports",
         "alembic_version",
     }
 
@@ -59,6 +60,7 @@ def test_downgrade_base_removes_schema(tmp_path, monkeypatch):
         "job_attempts",
         "job_submission_receipts",
         "registration_invitations",
+        "audio_imports",
         "alembic_version",
     }
 
@@ -70,6 +72,7 @@ def test_downgrade_base_removes_schema(tmp_path, monkeypatch):
     assert "job_attempts" not in table_names
     assert "job_submission_receipts" not in table_names
     assert "registration_invitations" not in table_names
+    assert "audio_imports" not in table_names
     assert "users" not in table_names
 
 

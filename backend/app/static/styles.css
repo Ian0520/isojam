@@ -459,6 +459,69 @@ input[type="file"]::file-selector-button {
   margin: 0;
 }
 
+.source-tabs {
+  display: flex;
+  gap: 24px;
+  border-bottom: 1px solid var(--border);
+  margin: 0 0 20px;
+}
+
+.source-tabs button {
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--muted);
+  padding: 8px 0;
+}
+
+.source-tabs button[aria-pressed="true"] {
+  border-bottom-color: var(--accent);
+  color: var(--text);
+}
+
+.youtube-input-row {
+  display: flex;
+  align-items: stretch;
+  gap: 12px;
+}
+
+.youtube-input-row input { flex: 1; }
+.youtube-input-row .button { flex-shrink: 0; }
+#youtube-help { max-width: 640px; }
+
+.import-progress {
+  border-left: 2px solid var(--accent);
+  padding: 4px 0 4px 16px;
+  margin: 24px 0;
+}
+
+.import-progress.error { border-color: var(--danger); }
+.import-progress.error > strong { color: var(--danger); }
+.import-progress .processing-indicator { margin: 16px 0 8px; }
+.import-progress .text-button { margin-right: 20px; }
+.import-progress p { margin: 8px 0; }
+
+.import-recent { margin-top: 24px; }
+.import-recent summary { cursor: pointer; color: var(--muted); font-size: 12px; }
+.import-recent > button { margin-top: 10px; }
+.import-list { list-style: none; padding: 0; margin: 8px 0 0; }
+.import-list button {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 16px;
+  width: 100%;
+  background: transparent;
+  color: var(--text);
+  border: 0;
+  border-top: 1px solid var(--border);
+  padding: 12px 0;
+  text-align: left;
+}
+.import-list button:hover:not(:disabled) { color: var(--accent); }
+.import-list .import-name { overflow-wrap: anywhere; min-width: 0; }
+.import-list .muted { flex-shrink: 0; font-size: 12px; }
+
 .session-panel {
   padding-top: 28px;
 }
@@ -688,6 +751,7 @@ footer a {
 }
 
 @media (max-width: 680px) {
+  .youtube-input-row { flex-direction: column; }
   .shell {
     padding: 0 18px;
   }

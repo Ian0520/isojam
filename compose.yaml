@@ -17,6 +17,7 @@ x-storage-environment: &storage-environment
   ISOJAM_AUDIO_STORAGE_DIR: /var/lib/isojam/audio
   ISOJAM_MAX_UPLOAD_BYTES: ${ISOJAM_MAX_UPLOAD_BYTES:-209715200}
   ISOJAM_MAX_AUDIO_DURATION_SECONDS: ${ISOJAM_MAX_AUDIO_DURATION_SECONDS:-600}
+  ISOJAM_MAX_CONVERTED_AUDIO_BYTES: ${ISOJAM_MAX_CONVERTED_AUDIO_BYTES:-268435456}
 
 x-logging: &logging
   driver: json-file
@@ -59,6 +60,31 @@ services:
     restart: "no"
     logging: *logging
 
+  importer:
+    image: ${ISOJAM_IMPORT_IMAGE:-isojam-youtube:local-stack}
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.youtube
+    init: true
+    command: [python, -m, app.import_worker, serve]
+    environment:
+      <<: *storage-environment
+    volumes:
+      - data:/var/lib/isojam
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: [CMD, python, -m, app.import_worker, health]
+      interval: 5s
+      timeout: 3s
+      start_period: 10s
+      retries: 6
+    # Download (120 s), probe (5 s), conversion (30 s), then publication.
+    stop_grace_period: 3m
+    restart: "no"
+    logging: *logging
+
   api:
     <<: *api-image
     init: true
@@ -68,7 +94,9 @@ services:
       ISOJAM_REGISTRATION_MODE: ${ISOJAM_REGISTRATION_MODE:-closed}
       ISOJAM_JWT_SECRET_KEY: ${ISOJAM_JWT_SECRET_KEY:?Set a stable ISOJAM_JWT_SECRET_KEY in .env}
       ISOJAM_MAX_UNFINISHED_JOBS_PER_USER: ${ISOJAM_MAX_UNFINISHED_JOBS_PER_USER:-2}
-      ISOJAM_MAX_CONVERTED_AUDIO_BYTES: ${ISOJAM_MAX_CONVERTED_AUDIO_BYTES:-268435456}
+      ISOJAM_YOUTUBE_IMPORTS_ENABLED: "1"
+      ISOJAM_MAX_UNFINISHED_IMPORTS_PER_USER: ${ISOJAM_MAX_UNFINISHED_IMPORTS_PER_USER:-1}
+      ISOJAM_MAX_UNFINISHED_IMPORTS: ${ISOJAM_MAX_UNFINISHED_IMPORTS:-8}
     ports:
       - "127.0.0.1:${ISOJAM_PORT:-8000}:8000"
     volumes:
@@ -77,6 +105,8 @@ services:
       migrate:
         condition: service_completed_successfully
       processor:
+        condition: service_healthy
+      importer:
         condition: service_healthy
     healthcheck:
       test: [CMD, python, -c, "from urllib.request import urlopen; urlopen('http://127.0.0.1:8000/health', timeout=2).close()"]

@@ -15,14 +15,15 @@ environment.
 | Service | Image and responsibility |
 | --- | --- |
 | `migrate` | CPU API image; applies Alembic migrations and exits before services start. |
-| `api` | CPU API image; browser, authentication, uploads, queued job submission and downloads. No Torch or model. |
+| `api` | CPU API image; browser, authentication, uploads, queued imports/jobs and downloads. No Torch or model. |
 | `processor` | GPU image; checks CUDA and cached model files, then runs the continuous dispatcher and its model worker children. |
+| `importer` | Separate CPU image; downloads YouTube audio, validates/converts it and registers owned uploads. No GPU or JWT secret. |
 | `models` | Explicit setup command in the GPU image; downloads and verifies model assets. It is not a background service. |
 
-The API and processor share the `data` volume at `/var/lib/isojam`, containing
+The API, processor and importer share the `data` volume at `/var/lib/isojam`, containing
 SQLite metadata and audio. The processor reads model weights from the separate
 `models` volume. Database identifiers and file paths therefore refer to the same
-data in both containers. This is a single-host design, not a remote worker setup.
+data in each container. This is a single-host design, not a remote worker setup.
 
 The dispatcher and its worker stay together in the processor container. Their
 process IDs and process groups must be visible to the same controller so it can
@@ -50,7 +51,7 @@ the images manually on another architecture; that does not provide a CUDA GPU.
 ## First setup
 
 Follow the [README setup steps](../README.md#start-locally-with-docker-compose)
-to check Docker, create `.env` without replacing an existing secret, build both
+to check Docker, create `.env` without replacing an existing secret, build the
 images, prepare models and start the stack. Compose needs no native Python
 virtual environment. Keep `.env` stable across container replacements.
 
@@ -63,9 +64,9 @@ Model weights are not embedded in the image or committed to Git. Normal processo
 it fails with a useful error if files are missing or damaged.
 
 Migrations must succeed before the processor starts. The processor must pass its
-GPU/cache preflight before the API starts. Open <http://127.0.0.1:8000/> and upload
+GPU/cache preflight and the importer must be ready before the API starts. Open <http://127.0.0.1:8000/> and upload
 a short WAV, MP3, M4A, AAC or FLAC after creating an account to try real processing. The terminal shows
-both services' logs. The example `.env` opens registration; the application
+the services' logs. The example `.env` opens registration; the application
 otherwise defaults to `closed`. See
 [registration configuration](configuration.md#configure-registration).
 The model is loaded by the worker for each job, rather than by the API.
@@ -82,7 +83,7 @@ docker compose up --abort-on-container-failure
 
 # Or start in the background and wait for health checks.
 docker compose up -d --wait
-docker compose logs --follow api processor
+docker compose logs --follow api processor importer
 
 # From another terminal, stop while preserving data and containers.
 docker compose stop
@@ -97,6 +98,10 @@ cycle and exits without taking the next job. Its stop grace is 35 minutes to
 cover the default 30-minute worker deadline and result publication. A queued job
 that has not started stays pending for the next startup. Uvicorn can report exit
 code 143 after its normal SIGTERM shutdown; the processor should exit zero.
+
+The importer drains its current bounded download/conversion with a three-minute
+stop grace, leaving queued imports pending. Forced interruption is reported as a
+failed import on restart; see [YouTube import recovery](youtube-imports.md).
 
 Let shutdown finish. A second Ctrl+C, a short explicit stop timeout or a forced
 kill can interrupt inference and leave an attempt requiring inspection. An old
