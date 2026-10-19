@@ -121,6 +121,48 @@ def test_app_uses_injected_upload_limit(
         assert test_app.state.max_upload_bytes == 1024
 
 
+def test_app_uses_injected_conversion_limit(jwt_secret_key, monkeypatch):
+    monkeypatch.setenv("ISOJAM_MAX_CONVERTED_AUDIO_BYTES", "invalid")
+    test_app = create_app(
+        jwt_secret_key=jwt_secret_key,
+        processing_mode="disabled",
+        max_converted_audio_bytes=1024,
+    )
+    with TestClient(test_app):
+        assert test_app.state.max_converted_audio_bytes == 1024
+
+
+def test_app_reads_conversion_limit_from_environment(jwt_secret_key, monkeypatch):
+    monkeypatch.setenv("ISOJAM_MAX_CONVERTED_AUDIO_BYTES", "2048")
+    test_app = create_app(jwt_secret_key=jwt_secret_key, processing_mode="disabled")
+    with TestClient(test_app):
+        assert test_app.state.max_converted_audio_bytes == 2048
+
+
+def test_app_rejects_invalid_conversion_limit_before_loading_model(
+    jwt_secret_key,
+    monkeypatch,
+):
+    monkeypatch.setenv("ISOJAM_MAX_CONVERTED_AUDIO_BYTES", "0")
+
+    def unexpected_model_factory():
+        pytest.fail("Model must not load when conversion configuration is invalid")
+
+    test_app = create_app(
+        model_session_factory=unexpected_model_factory,
+        jwt_secret_key=jwt_secret_key,
+    )
+    with pytest.raises(RuntimeError, match="ISOJAM_MAX_CONVERTED_AUDIO_BYTES"):
+        with TestClient(test_app):
+            pass
+
+
+@pytest.mark.parametrize("limit", [0, -1, True, 1.5])
+def test_app_rejects_invalid_injected_conversion_limit(limit):
+    with pytest.raises(ValueError, match="max_converted_audio_bytes"):
+        create_app(max_converted_audio_bytes=limit)
+
+
 def test_app_reads_upload_limit_from_environment(
     fake_model_session, jwt_secret_key, monkeypatch
 ):

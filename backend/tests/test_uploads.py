@@ -2,6 +2,7 @@ from datetime import timedelta
 from uuid import UUID
 
 import pytest
+import soundfile as sf
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 from sqlalchemy.exc import SQLAlchemyError
@@ -119,12 +120,16 @@ def test_upload_requires_authentication(client, tmp_path, monkeypatch):
     assert not upload_dir.exists()
 
 
-def test_rejects_mp3_upload(
+def test_rejects_invalid_mp3_upload(
     client,
     tmp_path,
     monkeypatch,
     auth_headers,
+    test_session_factory,
+    encoded_audio,
 ):
+    # Ensure conversion tools are available before asserting a decoding failure.
+    encoded_audio()
     upload_dir = tmp_path / "uploads"
     monkeypatch.setattr(storage, "UPLOAD_DIR", upload_dir)
 
@@ -140,12 +145,13 @@ def test_rejects_mp3_upload(
         headers=auth_headers,
     )
 
-    assert response.status_code == 415
-    assert response.json()["detail"] == "Unsupported audio type"
-    assert not upload_dir.exists()
+    assert response.status_code == 422
+    assert list(upload_dir.iterdir()) == []
+    with test_session_factory() as session:
+        assert session.scalar(select(func.count()).select_from(Upload)) == 0
 
 
-def test_rejects_non_wav_filename(
+def test_rejects_mismatched_filename_and_content_type(
     client,
     tmp_path,
     monkeypatch,
@@ -293,6 +299,7 @@ def test_upload_removes_file_when_validation_fails_unexpectedly(
         assert session.scalar(select(func.count()).select_from(Upload)) == 0
 
 
+@pytest.mark.parametrize("suffix", [".wav", ".flac"])
 @pytest.mark.parametrize("failure_step", ["repository", "commit"])
 def test_upload_removes_file_when_metadata_persistence_fails(
     client,
@@ -302,7 +309,10 @@ def test_upload_removes_file_when_metadata_persistence_fails(
     test_session_factory,
     wav_bytes,
     failure_step,
+    suffix,
+    encoded_audio,
 ):
+    payload = wav_bytes if suffix == ".wav" else encoded_audio(suffix).read_bytes()
     upload_dir = tmp_path / "uploads"
     upload_dir.mkdir()
     existing_file = upload_dir / "existing.wav"
@@ -328,7 +338,7 @@ def test_upload_removes_file_when_metadata_persistence_fails(
     with pytest.raises(SQLAlchemyError) as captured_error:
         client.post(
             "/uploads",
-            files={"audio_file": ("test.wav", wav_bytes, "audio/wav")},
+            files={"audio_file": (f"test{suffix}", payload, f"audio/{suffix[1:]}")},
             headers=auth_headers,
         )
     assert captured_error.value is persistence_error
@@ -336,3 +346,184 @@ def test_upload_removes_file_when_metadata_persistence_fails(
     assert existing_file.read_bytes() == wav_bytes
     with test_session_factory() as session:
         assert session.scalar(select(func.count()).select_from(Upload)) == 0
+
+
+@pytest.mark.parametrize(
+    "suffix, content_type",
+    [
+        (".mp3", "audio/mpeg"),
+        (".m4a", "audio/mp4"),
+        (".aac", "audio/aac"),
+        (".flac", "audio/flac"),
+    ],
+)
+def test_upload_normalizes_audio_and_preserves_display_filename(
+    client,
+    tmp_path,
+    monkeypatch,
+    auth_headers,
+    test_session_factory,
+    encoded_audio,
+    suffix,
+    content_type,
+):
+    upload_dir = tmp_path / "uploads"
+    monkeypatch.setattr(storage, "UPLOAD_DIR", upload_dir)
+    source = encoded_audio(suffix)
+    response = client.post(
+        "/uploads",
+        headers=auth_headers,
+        files={
+            "audio_file": (f"My recording{suffix}", source.read_bytes(), content_type)
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["filename"] == f"My recording{suffix}"
+    assert response.json()["content_type"] == content_type
+    with test_session_factory() as session:
+        record = session.get(Upload, UUID(response.json()["id"]))
+        assert record.original_filename == f"My recording{suffix}"
+        assert record.stored_filename.endswith(".wav")
+        output = upload_dir / record.stored_filename
+    assert list(upload_dir.iterdir()) == [output]
+    assert sf.info(output).samplerate == 44100
+    assert sf.info(output).subtype == "FLOAT"
+
+
+@pytest.mark.parametrize(
+    "limit, value",
+    [
+        ("max_converted_audio_bytes", 10000),
+        ("max_audio_duration_seconds", 1),
+    ],
+)
+def test_upload_removes_source_and_partial_conversion_when_limit_exceeded(
+    client,
+    tmp_path,
+    monkeypatch,
+    auth_headers,
+    encoded_audio,
+    test_session_factory,
+    limit,
+    value,
+):
+    upload_dir = tmp_path / "uploads"
+    monkeypatch.setattr(storage, "UPLOAD_DIR", upload_dir)
+    monkeypatch.setattr(client.app.state, limit, value)
+    source = encoded_audio(".flac", frames=44101)
+    response = client.post(
+        "/uploads",
+        headers=auth_headers,
+        files={"audio_file": ("source.flac", source.read_bytes(), "audio/flac")},
+    )
+    assert response.status_code == 413
+    assert list(upload_dir.iterdir()) == []
+    with test_session_factory() as session:
+        assert session.scalar(select(func.count()).select_from(Upload)) == 0
+
+
+def test_upload_collision_preserves_existing_normalized_file(
+    client,
+    tmp_path,
+    monkeypatch,
+    auth_headers,
+    encoded_audio,
+    test_session_factory,
+):
+    upload_dir = tmp_path / "uploads"
+    upload_dir.mkdir()
+    monkeypatch.setattr(storage, "UPLOAD_DIR", upload_dir)
+    monkeypatch.setattr(storage, "uuid4", lambda: "existing")
+    existing = upload_dir / "existing.wav"
+    existing.write_bytes(b"keep this recording")
+    source = encoded_audio()
+    with pytest.raises(FileExistsError):
+        client.post(
+            "/uploads",
+            headers=auth_headers,
+            files={"audio_file": ("source.mp3", source.read_bytes(), "audio/mpeg")},
+        )
+    assert list(upload_dir.iterdir()) == [existing]
+    assert existing.read_bytes() == b"keep this recording"
+    with test_session_factory() as session:
+        assert session.scalar(select(func.count()).select_from(Upload)) == 0
+
+
+@pytest.mark.parametrize("failure", ["unavailable", "busy", "unexpected"])
+def test_upload_cleans_source_when_converter_cannot_run(
+    client,
+    tmp_path,
+    monkeypatch,
+    auth_headers,
+    test_session_factory,
+    failure,
+):
+    import app.routers.uploads as upload_routes
+    from app.audio_conversion import ConversionBusyError, ConversionUnavailableError
+
+    upload_dir = tmp_path / "uploads"
+    monkeypatch.setattr(storage, "UPLOAD_DIR", upload_dir)
+    errors = {
+        "unavailable": ConversionUnavailableError("Conversion unavailable"),
+        "busy": ConversionBusyError("Conversion busy"),
+        "unexpected": RuntimeError("Unexpected failure"),
+    }
+
+    def failing_converter(*args, **kwargs):
+        raise errors[failure]
+
+    monkeypatch.setattr(upload_routes, "convert_to_wav", failing_converter)
+
+    def upload():
+        return client.post(
+            "/uploads",
+            headers=auth_headers,
+            files={"audio_file": ("source.mp3", b"source", "audio/mpeg")},
+        )
+
+    if failure == "unexpected":
+        with pytest.raises(RuntimeError, match="Unexpected failure"):
+            upload()
+    else:
+        assert upload().status_code == 503
+    assert list(upload_dir.iterdir()) == []
+    with test_session_factory() as session:
+        assert session.scalar(select(func.count()).select_from(Upload)) == 0
+
+
+def test_upload_conversion_runs_without_open_database_transaction(
+    client,
+    tmp_path,
+    monkeypatch,
+    auth_headers,
+    encoded_audio,
+    test_session_factory,
+):
+    import app.routers.uploads as upload_routes
+    from app.database import get_db
+
+    monkeypatch.setattr(storage, "UPLOAD_DIR", tmp_path / "uploads")
+    source = encoded_audio(".flac")
+    original_converter = upload_routes.convert_to_wav
+    with test_session_factory() as session:
+
+        def same_session():
+            yield session
+
+        def checked_converter(*args, **kwargs):
+            assert not session.in_transaction()
+            return original_converter(*args, **kwargs)
+
+        client.app.dependency_overrides[get_db] = same_session
+        monkeypatch.setattr(upload_routes, "convert_to_wav", checked_converter)
+        try:
+            response = client.post(
+                "/uploads",
+                headers=auth_headers,
+                files={
+                    "audio_file": ("source.flac", source.read_bytes(), "audio/flac")
+                },
+            )
+            assert response.status_code == 200
+        finally:
+            client.app.dependency_overrides.pop(get_db)
