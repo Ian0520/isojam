@@ -22,6 +22,8 @@ _FORMATS = {
     ".m4a": (("audio/mp4", "audio/x-m4a", "audio/m4a"), "mov", {"aac", "alac"}),
     ".aac": (("audio/aac", "audio/x-aac"), "aac", {"aac"}),
     ".flac": (("audio/flac", "audio/x-flac"), "flac", {"flac"}),
+    # Internal downloader input; an empty MIME tuple keeps WebM out of uploads.
+    ".webm": ((), "matroska", {"opus"}),
 }
 
 
@@ -41,7 +43,7 @@ def get_audio_upload_types() -> dict[str, str]:
     """Canonical multipart types for browser uploads; decoding still verifies content."""
     return {
         ".wav": "audio/wav",
-        **{suffix: info[0][0] for suffix, info in _FORMATS.items()},
+        **{suffix: info[0][0] for suffix, info in _FORMATS.items() if info[0]},
     }
 
 

@@ -251,7 +251,8 @@ retention or backup policy.
 Browser access tokens are tab-scoped, expire after 30 minutes and have no refresh
 flow. Preview downloads the whole authenticated WAV before playback. Custom
 backing-track mixing, looping and speed adjustment are not implemented.
-Uploads accept local audio files; YouTube and other URL imports are not implemented.
+The browser accepts local audio files. A [standalone YouTube importer](docs/youtube-imports.md)
+is available for development; browser URL imports are not connected yet.
 
 The queue favors avoiding duplicate execution when a worker's exit is uncertain.
 Automatic inference retry of uncertain attempts is not supported. A successful
