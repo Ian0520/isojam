@@ -1,10 +1,21 @@
 from pathlib import Path
 
 from fastapi import APIRouter, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
+from fastapi.staticfiles import StaticFiles
+from starlette.types import Scope
 
 STATIC_DIR = Path(__file__).resolve().parents[1] / "static"
 router = APIRouter()
+
+
+class RevalidatingStaticFiles(StaticFiles):
+    async def get_response(self, path: str, scope: Scope) -> Response:
+        response = await super().get_response(path, scope)
+        # HTML and its scripts/styles must agree after a container replacement.
+        # Keep ETag/304 support, but require validation before reusing an asset.
+        response.headers["Cache-Control"] = "no-cache"
+        return response
 
 
 @router.get("/", include_in_schema=False)

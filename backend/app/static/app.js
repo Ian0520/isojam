@@ -1,5 +1,5 @@
-import { authenticate } from "./auth.js";
-import { JobHistory } from "./history.js";
+import { authenticate } from "./auth.js?v=workspace";
+import { JobHistory } from "./history.js?v=workspace";
 
 const $ = (id) => document.getElementById(id);
 const storage = {
