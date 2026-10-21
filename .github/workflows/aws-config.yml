@@ -1,0 +1,51 @@
+name: AWS configuration
+
+on:
+  pull_request:
+    paths:
+      - deploy/aws/**
+      - compose.yaml
+      - .github/workflows/aws-config.yml
+  push:
+    paths:
+      - deploy/aws/**
+      - compose.yaml
+      - .github/workflows/aws-config.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Test host wrapper and shell syntax
+        run: |
+          bash -n deploy/aws/stack.sh
+          python3 -m unittest discover -s deploy/aws/tests -v
+
+      - name: Validate merged Compose configuration
+        env:
+          ISOJAM_JWT_SECRET_KEY: config-validation-only
+        run: docker compose -f compose.yaml -f deploy/aws/compose.aws.yaml --profile setup config --quiet
+
+      - name: Validate CloudFormation schema for Sydney
+        run: |
+          python3 -m venv "$RUNNER_TEMP/cfn-lint"
+          "$RUNNER_TEMP/cfn-lint/bin/pip" install cfn-lint==1.58.0
+          "$RUNNER_TEMP/cfn-lint/bin/cfn-lint" --regions ap-southeast-2 --template deploy/aws/ec2.yaml
+
+      - name: Check private test security and cost settings
+        run: |
+          curl --fail --location --output "$RUNNER_TEMP/guard.tar.gz" \
+            https://github.com/aws-cloudformation/cloudformation-guard/releases/download/3.2.1/cfn-guard-v3-x86_64-ubuntu-latest.tar.gz
+          echo '09c2b8cfd81d513374a8da89d4805dc55006a3da52bbf598e272022d4d198e94  '"$RUNNER_TEMP/guard.tar.gz" | sha256sum --check
+          mkdir "$RUNNER_TEMP/guard"
+          tar -xzf "$RUNNER_TEMP/guard.tar.gz" -C "$RUNNER_TEMP/guard"
+          "$RUNNER_TEMP/guard/cfn-guard-v3-x86_64-ubuntu-latest/cfn-guard" validate \
+            --rules deploy/aws/private-test.guard --data deploy/aws/ec2.yaml --output-format json --show-summary none

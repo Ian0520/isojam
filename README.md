@@ -16,6 +16,10 @@ Current interface with synthetic preview data. See the
 [recorded real-GPU demo and verification evidence](docs/demo.md) for processing
 checks; the recording shows an earlier interface.
 
+For a private, start/stop GPU host on AWS, see the
+[AWS test deployment guide](docs/aws-test-deployment.md). The cloud configuration
+is prepared for testing; real AWS inference and persistence verification are pending.
+
 ## Start locally with Docker Compose
 
 This is the recommended setup for personal use. All commands below run in a

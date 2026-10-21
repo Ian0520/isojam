@@ -1,0 +1,27 @@
+# Project-specific checks: AWS's ENCRYPTED_VOLUMES registry rule only inspects
+# standalone AWS::EC2::Volume resources, not an instance's root block mapping.
+let hosts = Resources.*[ Type == 'AWS::EC2::Instance' ]
+let groups = Resources.*[ Type == 'AWS::EC2::SecurityGroup' ]
+let ingress = Resources.*[ Type == 'AWS::EC2::SecurityGroupIngress' ]
+
+rule REQUIRE_IMDSV2 when %hosts !empty {
+    %hosts.Properties.MetadataOptions.HttpTokens == 'required'
+    %hosts.Properties.MetadataOptions.HttpPutResponseHopLimit == 1
+}
+
+rule ENCRYPT_AND_RETAIN_DISKS when %hosts !empty {
+    %hosts.Properties.BlockDeviceMappings.*.Ebs.Encrypted == true
+    %hosts.Properties.BlockDeviceMappings.*.Ebs.DeleteOnTermination == false
+}
+
+rule KEEP_PRIVATE_TEST_ACCESS when %groups !empty {
+    %groups.Properties.SecurityGroupIngress empty
+    %ingress empty
+}
+
+rule KEEP_TEST_COST_SETTINGS when %hosts !empty {
+    %hosts.Properties.InstanceType == 'g4dn.xlarge'
+    %hosts.Properties.BlockDeviceMappings.*.Ebs.VolumeSize == 100
+    %hosts.Properties.BlockDeviceMappings.*.Ebs.VolumeType == 'gp3'
+    %hosts.Properties.InstanceInitiatedShutdownBehavior == 'stop'
+}
