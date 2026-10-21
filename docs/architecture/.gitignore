@@ -1,0 +1,3 @@
+# Local Archify validation evidence; authored sources and diagrams are tracked.
+.checks/
+*.delivery.json

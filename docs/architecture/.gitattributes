@@ -1,0 +1,5 @@
+# Review authored JSON rather than bundled viewer code and embedded fonts.
+*.html linguist-generated=true whitespace=-blank-at-eol
+*.svg linguist-generated=true whitespace=-blank-at-eol
+# Retain the validated source bytes, including Windows line endings.
+sources/*.json whitespace=cr-at-eol

@@ -201,19 +201,10 @@ queue recovery, storage and diagnostic commands.
 
 ## How it works
 
-```mermaid
-flowchart LR
-    Browser[Browser] --> API[CPU API]
-    API --> DB[(SQLite: accounts, uploads, jobs)]
-    API --> Audio[Shared audio storage]
-    Dispatcher[GPU processor: dispatcher] --> DB
-    Dispatcher --> Worker[Model worker child]
-    Audio --> Worker
-    Worker --> Bundle[Verified output bundle]
-    Bundle --> Dispatcher
-    Dispatcher -->|publish after confirmed worker exit| DB
-    API -->|owned previews and downloads| Browser
-```
+![IsoJam local system architecture](docs/architecture/system-overview.svg)
+
+See the [architecture diagrams](docs/architecture/README.md) for the job
+execution sequence, complete database ERD and interactive readers.
 
 The API accepts durable queued jobs without loading the model. The dispatcher
 runs one attempt at a time on this host. Execution permission, heartbeats and
@@ -279,6 +270,7 @@ health response proves HTTP availability, not that a job can finish.
 
 ## Further reading
 
+- [System architecture, job execution and database schema](docs/architecture/README.md)
 - [Local stack operation and model cache](docs/local-stack.md)
 - [Configuration and API reference; alternative native setup](docs/configuration.md)
 - [Registration invitations](docs/invitations.md)

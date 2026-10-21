@@ -1,0 +1,556 @@
+{
+  "schema_version": 1,
+  "diagram_type": "erd",
+  "meta": {
+    "title": "IsoJam | Database ERD - 8 Tables / 56 Columns",
+    "output": "docs/architecture/database-schema.html",
+    "locale": "en",
+    "repository": {
+      "revision": "0b202f9bfdd82f0040c4ba1194ca69d9d86cf1c5",
+      "url": "git@github.com:Ian0520/isojam.git",
+      "link_mode": "local-only"
+    },
+    "quality_profile": "standard"
+  },
+  "layout": {
+    "mode": "grid",
+    "gapX": 100,
+    "gapY": 60,
+    "entityW": 310,
+    "rowH": 18
+  },
+  "entities": [
+    {
+      "id": "registration_invitations",
+      "label": "registration_invitations",
+      "sublabel": "Unique code_hash; email is not a foreign key",
+      "tag": "Accounts and registration",
+      "row": 1,
+      "col": 0,
+      "width": 310,
+      "attributes": [
+        {
+          "name": "id",
+          "type": "CHAR(32)",
+          "key": "pk"
+        },
+        {
+          "name": "email",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "code_hash",
+          "type": "VARCHAR(64)",
+          "key": "uk"
+        },
+        {
+          "name": "created_at",
+          "type": "DATETIME"
+        },
+        {
+          "name": "expires_at",
+          "type": "DATETIME"
+        },
+        {
+          "name": "used_at",
+          "type": "DATETIME NULL"
+        }
+      ],
+      "sources": [
+        {
+          "path": "backend/app/db_models.py",
+          "line": 221,
+          "end_line": 247,
+          "label": "Columns, foreign keys and constraints"
+        }
+      ]
+    },
+    {
+      "id": "users",
+      "label": "users",
+      "sublabel": "Unique email; stores password hashes only",
+      "tag": "Accounts and registration",
+      "row": 0,
+      "col": 0,
+      "width": 310,
+      "attributes": [
+        {
+          "name": "id",
+          "type": "CHAR(32)",
+          "key": "pk"
+        },
+        {
+          "name": "email",
+          "type": "VARCHAR",
+          "key": "uk"
+        },
+        {
+          "name": "password_hash",
+          "type": "VARCHAR"
+        }
+      ],
+      "sources": [
+        {
+          "path": "backend/app/db_models.py",
+          "line": 213,
+          "end_line": 218,
+          "label": "Columns, foreign keys and constraints"
+        }
+      ]
+    },
+    {
+      "id": "uploads",
+      "label": "uploads",
+      "sublabel": "Original and stored filenames are separate",
+      "tag": "Audio sources",
+      "row": 0,
+      "col": 1,
+      "width": 310,
+      "attributes": [
+        {
+          "name": "id",
+          "type": "CHAR(32)",
+          "key": "pk"
+        },
+        {
+          "name": "user_id",
+          "type": "CHAR(32)",
+          "key": "fk",
+          "references": "users.id"
+        },
+        {
+          "name": "original_filename",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "stored_filename",
+          "type": "VARCHAR"
+        }
+      ],
+      "sources": [
+        {
+          "path": "backend/app/db_models.py",
+          "line": 21,
+          "end_line": 27,
+          "label": "Columns, foreign keys and constraints"
+        }
+      ]
+    },
+    {
+      "id": "audio_imports",
+      "label": "audio_imports",
+      "sublabel": "Composite UK: user_id + submission_key",
+      "tag": "Audio sources",
+      "row": 1,
+      "col": 1,
+      "width": 310,
+      "attributes": [
+        {
+          "name": "id",
+          "type": "CHAR(32)",
+          "key": "pk"
+        },
+        {
+          "name": "user_id",
+          "type": "CHAR(32)",
+          "key": [
+            "fk",
+            "uk"
+          ],
+          "references": "users.id"
+        },
+        {
+          "name": "video_id",
+          "type": "VARCHAR(11)"
+        },
+        {
+          "name": "submission_key",
+          "type": "VARCHAR(128)",
+          "key": "uk"
+        },
+        {
+          "name": "status",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "upload_id",
+          "type": "CHAR(32) NULL",
+          "key": "fk",
+          "references": "uploads.id"
+        },
+        {
+          "name": "filename",
+          "type": "VARCHAR NULL"
+        },
+        {
+          "name": "error_code",
+          "type": "VARCHAR(32) NULL"
+        },
+        {
+          "name": "created_at",
+          "type": "DATETIME"
+        }
+      ],
+      "sources": [
+        {
+          "path": "backend/app/db_models.py",
+          "line": 30,
+          "end_line": 65,
+          "label": "Columns, foreign keys and constraints"
+        }
+      ]
+    },
+    {
+      "id": "jobs",
+      "label": "jobs",
+      "sublabel": "Requested work and user-visible status",
+      "tag": "Jobs and outputs",
+      "row": 0,
+      "col": 2,
+      "width": 310,
+      "attributes": [
+        {
+          "name": "id",
+          "type": "CHAR(32)",
+          "key": "pk"
+        },
+        {
+          "name": "upload_id",
+          "type": "CHAR(32)",
+          "key": "fk",
+          "references": "uploads.id"
+        },
+        {
+          "name": "status",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "execution_backend",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "created_at",
+          "type": "DATETIME"
+        },
+        {
+          "name": "updated_at",
+          "type": "DATETIME"
+        }
+      ],
+      "sources": [
+        {
+          "path": "backend/app/db_models.py",
+          "line": 68,
+          "end_line": 88,
+          "label": "Columns, foreign keys and constraints"
+        }
+      ]
+    },
+    {
+      "id": "job_attempts",
+      "label": "job_attempts",
+      "sublabel": "UK：job_id + attempt_number；invocation_id",
+      "tag": "Submission and execution",
+      "row": 1,
+      "col": 3,
+      "width": 450,
+      "attributes": [
+        {
+          "name": "id",
+          "type": "CHAR(32)",
+          "key": "pk"
+        },
+        {
+          "name": "job_id",
+          "type": "CHAR(32)",
+          "key": [
+            "fk",
+            "uk"
+          ],
+          "references": "jobs.id"
+        },
+        {
+          "name": "attempt_number",
+          "type": "INTEGER",
+          "key": "uk"
+        },
+        {
+          "name": "phase",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "dispatcher_id",
+          "type": "CHAR(32) NULL"
+        },
+        {
+          "name": "dispatcher_generation",
+          "type": "INTEGER"
+        },
+        {
+          "name": "reservation_expires_at",
+          "type": "DATETIME NULL"
+        },
+        {
+          "name": "execution_authorization_expires_at",
+          "type": "DATETIME NULL"
+        },
+        {
+          "name": "invocation_id",
+          "type": "CHAR(32) NULL",
+          "key": "uk"
+        },
+        {
+          "name": "last_heartbeat_at",
+          "type": "DATETIME NULL"
+        },
+        {
+          "name": "local_worker_id",
+          "type": "CHAR(32) NULL"
+        },
+        {
+          "name": "local_worker_pid",
+          "type": "INTEGER NULL"
+        },
+        {
+          "name": "execution_stopped_at",
+          "type": "DATETIME NULL"
+        },
+        {
+          "name": "execution_exit_code",
+          "type": "INTEGER NULL"
+        },
+        {
+          "name": "result_manifest_key",
+          "type": "VARCHAR NULL"
+        },
+        {
+          "name": "result_manifest_sha256",
+          "type": "VARCHAR NULL"
+        },
+        {
+          "name": "created_at",
+          "type": "DATETIME"
+        },
+        {
+          "name": "updated_at",
+          "type": "DATETIME"
+        },
+        {
+          "name": "started_at",
+          "type": "DATETIME NULL"
+        },
+        {
+          "name": "finished_at",
+          "type": "DATETIME NULL"
+        }
+      ],
+      "sources": [
+        {
+          "path": "backend/app/db_models.py",
+          "line": 91,
+          "end_line": 181,
+          "label": "Columns, foreign keys and constraints"
+        }
+      ]
+    },
+    {
+      "id": "job_outputs",
+      "label": "job_outputs",
+      "sublabel": "Composite PK: job_id + stem",
+      "tag": "Jobs and outputs",
+      "row": 1,
+      "col": 2,
+      "width": 310,
+      "attributes": [
+        {
+          "name": "job_id",
+          "type": "CHAR(32)",
+          "key": [
+            "pk",
+            "fk"
+          ],
+          "references": "jobs.id"
+        },
+        {
+          "name": "stem",
+          "type": "VARCHAR",
+          "key": "pk"
+        },
+        {
+          "name": "path",
+          "type": "VARCHAR"
+        }
+      ],
+      "sources": [
+        {
+          "path": "backend/app/db_models.py",
+          "line": 205,
+          "end_line": 210,
+          "label": "Columns, foreign keys and constraints"
+        }
+      ]
+    },
+    {
+      "id": "job_submission_receipts",
+      "label": "job_submission_receipts",
+      "sublabel": "Composite PK: user_id + key",
+      "tag": "Submission and execution",
+      "row": 0,
+      "col": 3,
+      "width": 450,
+      "attributes": [
+        {
+          "name": "user_id",
+          "type": "CHAR(32)",
+          "key": [
+            "pk",
+            "fk"
+          ],
+          "references": "users.id"
+        },
+        {
+          "name": "key",
+          "type": "VARCHAR(128)",
+          "key": "pk"
+        },
+        {
+          "name": "request_fingerprint",
+          "type": "VARCHAR(64)"
+        },
+        {
+          "name": "job_id",
+          "type": "CHAR(32)",
+          "key": "fk",
+          "references": "jobs.id"
+        },
+        {
+          "name": "created_at",
+          "type": "DATETIME"
+        }
+      ],
+      "sources": [
+        {
+          "path": "backend/app/db_models.py",
+          "line": 184,
+          "end_line": 202,
+          "label": "Columns, foreign keys and constraints"
+        }
+      ]
+    }
+  ],
+  "relationships": [
+    {
+      "id": "uploads-user_id",
+      "from": "uploads",
+      "to": "users",
+      "fromCardinality": "many",
+      "toCardinality": "one",
+      "fromOptional": true,
+      "toOptional": false,
+      "identifying": false
+    },
+    {
+      "id": "audio_imports-user_id",
+      "from": "audio_imports",
+      "to": "users",
+      "fromCardinality": "many",
+      "toCardinality": "one",
+      "fromOptional": true,
+      "toOptional": false,
+      "identifying": false
+    },
+    {
+      "id": "audio_imports-upload_id",
+      "from": "audio_imports",
+      "to": "uploads",
+      "fromCardinality": "many",
+      "toCardinality": "one",
+      "fromOptional": true,
+      "toOptional": true,
+      "identifying": false
+    },
+    {
+      "id": "jobs-upload_id",
+      "from": "jobs",
+      "to": "uploads",
+      "fromCardinality": "many",
+      "toCardinality": "one",
+      "fromOptional": true,
+      "toOptional": false,
+      "identifying": false
+    },
+    {
+      "id": "job_attempts-job_id",
+      "from": "job_attempts",
+      "to": "jobs",
+      "fromCardinality": "many",
+      "toCardinality": "one",
+      "fromOptional": true,
+      "toOptional": false,
+      "identifying": false
+    },
+    {
+      "id": "job_outputs-job_id",
+      "from": "job_outputs",
+      "to": "jobs",
+      "fromCardinality": "many",
+      "toCardinality": "one",
+      "fromOptional": true,
+      "toOptional": false,
+      "identifying": true
+    },
+    {
+      "id": "job_submission_receipts-user_id",
+      "from": "job_submission_receipts",
+      "to": "users",
+      "fromCardinality": "many",
+      "toCardinality": "one",
+      "fromOptional": true,
+      "toOptional": false,
+      "identifying": true
+    },
+    {
+      "id": "job_submission_receipts-job_id",
+      "from": "job_submission_receipts",
+      "to": "jobs",
+      "fromCardinality": "many",
+      "toCardinality": "one",
+      "fromOptional": true,
+      "toOptional": false,
+      "identifying": false
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Primary and unique keys",
+      "items": [
+        "PK columns may form one composite key; each column need not be unique alone.",
+        "job_submission_receipts：PK(user_id, key)。",
+        "job_outputs：PK(job_id, stem)。",
+        "audio_imports：UK(user_id, submission_key)。",
+        "job_attempts: UK(job_id, attempt_number), plus UK(invocation_id)."
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Reading relationships",
+      "items": [
+        "Each relationship runs from the child holding the FK to the referenced parent.",
+        "Parents may have zero child rows; audio_imports.upload_id is nullable.",
+        "Neither audio_imports.upload_id nor job_submission_receipts.job_id is unique.",
+        "Invitation emails are bound by application logic, without a users foreign key."
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Types and application rules",
+      "items": [
+        "Types use the SQLite dialect of the current SQLAlchemy models.",
+        "Only columns marked NULL are nullable; UUIDs are stored as CHAR(32).",
+        "UK marks members of a unique constraint; subtitles and key notes define each group.",
+        "The application verifies all seven tracks; the database has no exactly-seven-rows constraint."
+      ]
+    }
+  ]
+}
