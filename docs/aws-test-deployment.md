@@ -1,8 +1,8 @@
 # Private AWS test deployment
 
 This guide prepares one start/stop GPU host in **ap-southeast-2 (Sydney)**.
-The configuration is prepared for testing; it has not yet passed a real AWS
-inference or stop/start test. Do not treat local checks as cloud verification.
+The first AWS test uses the same API/importer/processor images as the local
+stack. Recorded cloud verification and its limits appear at the end of this guide.
 Public HTTPS and access for friends are a later stage.
 
 ## Design and cost
@@ -304,5 +304,98 @@ cfn-lint reported no findings, AWS `ValidateTemplate` accepted the template, and
 all four project Guard policies passed on Windows and Linux. Five disposable
 negative templates were rejected for public ingress, unencrypted storage,
 optional IMDSv2, a larger disk and termination-on-poweroff. These checks prove
-configuration behavior, not a successful cloud launch. The new GitHub workflow
-has not yet run on GitHub.
+configuration behavior, not a successful cloud launch. GitHub workflow status
+was not part of these local checks.
+
+### First private AWS run on 2026-10-21
+
+The private stack launched in Sydney using the template's AWS DLAMI on one
+`g4dn.xlarge`. The host reported an NVIDIA Tesla T4 with 15,360 MiB available,
+driver 595.91.07, Docker Engine 29.9.1, Compose 5.6.0 and NVIDIA Container Toolkit
+1.20.1. These host tools were already installed in the AMI. The SSM role and
+instance profile were attached, IMDSv2 was required, and the security group had
+no inbound rules. The two-hour timer was active after initial cloud-init.
+
+The encrypted 100 GB gp3 root EBS disk contained `/srv`, `/var/lib/docker` and
+`/var/lib/containerd`. The AMI also had a separate ephemeral NVMe filesystem at
+`/opt/dlami/nvme`; it was not used for application state or images. About 32 GB
+remained free after the initial builds. This establishes room for the test,
+not unlimited recording retention or a long-term storage estimate.
+
+The three images built from application revision `69dc2fd`. The pinned model
+checkpoint downloaded and passed SHA-256 verification. The API, importer and
+processor became healthy, and the browser page, `/health` and `/ui-info` loaded
+through an SSM tunnel to local port 8001. Registration used `invite` mode.
+The JWT secret was generated on the host in a root-only runtime settings file.
+
+The first automated setup exposed an input-handling bug: Compose's one-off
+model container kept stdin open and consumed the remainder of the shell script.
+The command exited successfully even though the later service-start command
+never ran. Revision `de687d0` makes model setup explicitly noninteractive and
+adds a regression test that preserves a parent shell's pending input. All six
+wrapper tests and Python lint/format checks passed. The exact revision was
+transferred as a Git bundle and checked out on the host without publishing the
+branch; no application image rebuild was needed for this host-wrapper change.
+
+The cloud smoke created a synthetic test account through invitation redemption,
+uploaded 30 seconds of generated stereo audio and submitted a queued job. A
+repeated request with the same idempotency key returned the same job. Shutdown
+was requested after inference was observed in the worker log. The stack drained
+in 16.09 seconds; the processor exited zero, the job completed with all seven
+outputs, and its single attempt had recorded successful exit proof. The stored
+upload hash matched the submitted WAV. Test credentials stayed in a root-only
+host file and were not printed into command output or committed.
+
+These checks use synthetic tones, not a music-quality benchmark. They do not
+establish performance for ten-minute recordings, five simultaneous users or
+YouTube downloads from AWS addresses.
+
+### Spend-limit interruption and recovery
+
+After the application drained, a normal EC2 stop completed and the same instance
+started again. SSM returned online, but the application-level persistence check
+had not run when the session was interrupted. At 13:12:22 UTC on 2026-10-21,
+CloudTrail recorded another `StopInstances` call from the AWS-managed
+`AWSServiceRoleForBudgetsSpendLimitMember` role. A subsequent start request was
+denied by a managed service control policy with a `DenyCompute` statement.
+The host remained stopped with its encrypted root disk retained.
+
+The project still reported the Paid plan and $200 in remaining credits. That
+does not override a spend limit: AWS applies spend limits to pre-tax costs
+before credits and can pause resources through early cost controls. Project
+owners can inspect the project's spend status and controls in
+[AWS Settings > Billing](https://settings.aws.com/). If the project is paused,
+AWS documents increasing its spend limit as the reactivation step. Review the
+amount and resulting cost exposure before changing it; do not remove managed
+policies or create replacement resources to bypass the control. See
+[AWS spend-limit documentation](https://docs.aws.amazon.com/accounts/latest/reference/create-spend-limit.html).
+
+After the owner removed the spend limit, the same instance successfully started
+at 14:40 UTC. The application was not enabled for automatic startup, and the
+boot timer was active with its next action at 16:40:43 UTC. The root filesystem
+check reported success and SQLite's read-only `PRAGMA integrity_check` returned
+`ok`.
+
+Model preparation verified the existing cache without downloading again. The
+application started from the three existing images without rebuilding; the API,
+importer and processor were healthy. Logging into the saved test account worked,
+and the completed job still had the same single attempt, exit proof, upload hash
+and seven result hashes. All seven authenticated downloads matched those hashes;
+all seven requests without credentials returned `401`.
+
+At 14:43:45 UTC, the test manually started `isojam-session-end.service`, the same
+action used by the boot timer. The Linux console recorded orderly service
+shutdown, filesystem unmounting and `reboot: Power down`. EC2 was confirmed
+`stopped` at 14:50 UTC, with the root disk retained; no force stop was used.
+This tests the timer's shutdown action and the installed two-hour deadline
+separately; the test did not wait two hours for an actual timer expiration.
+
+Cost Explorer returned no usage entries yet for this project's October-to-date
+query, and marked the result estimated. The Paid plan was active and the credit
+balance still reported $200. Empty billing results are not proof of zero cost;
+checking posted charges and credit application in AWS Settings > Billing remains
+pending.
+
+The private tunnel is closed while the host is stopped, so `localhost:8001`
+does not currently serve the AWS application. Stopped compute has no instance
+running-hour charge; the retained 100 GB disk continues to incur storage cost.

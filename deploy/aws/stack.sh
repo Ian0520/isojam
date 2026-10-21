@@ -27,7 +27,8 @@ compose=(docker compose --project-name isojam-aws --project-directory "$repo_dir
 
 case ${1:-} in
     build) "${compose[@]}" build ;;
-    models) "${compose[@]}" --profile setup run --rm --no-deps models ;;
+    # Model preparation must not consume the caller's piped deployment script.
+    models) "${compose[@]}" --profile setup run --rm --no-deps --interactive=false -T models ;;
     start) "${compose[@]}" up --detach --wait --wait-timeout 180 --no-build ;;
     # No timeout override: preserve the processor's 35-minute drain allowance.
     stop) "${compose[@]}" stop ;;

@@ -6,7 +6,7 @@
     "output": "docs/architecture/database-schema.html",
     "locale": "en",
     "repository": {
-      "revision": "0b202f9bfdd82f0040c4ba1194ca69d9d86cf1c5",
+      "revision": "f2bea0ca7ee2cd13fc3083ee0f3ad08008cc5d97",
       "url": "git@github.com:Ian0520/isojam.git",
       "link_mode": "local-only"
     },
@@ -14,10 +14,11 @@
   },
   "layout": {
     "mode": "grid",
-    "gapX": 100,
-    "gapY": 60,
+    "gapX": 110,
+    "gapY": 110,
     "entityW": 310,
-    "rowH": 18
+    "rowH": 24,
+    "headerH": 44
   },
   "entities": [
     {
@@ -27,7 +28,7 @@
       "tag": "Accounts and registration",
       "row": 1,
       "col": 0,
-      "width": 310,
+      "width": 360,
       "attributes": [
         {
           "name": "id",
@@ -72,7 +73,7 @@
       "tag": "Accounts and registration",
       "row": 0,
       "col": 0,
-      "width": 310,
+      "width": 360,
       "attributes": [
         {
           "name": "id",
@@ -105,7 +106,7 @@
       "tag": "Audio sources",
       "row": 0,
       "col": 1,
-      "width": 310,
+      "width": 360,
       "attributes": [
         {
           "name": "id",
@@ -143,7 +144,7 @@
       "tag": "Audio sources",
       "row": 1,
       "col": 1,
-      "width": 310,
+      "width": 360,
       "attributes": [
         {
           "name": "id",
@@ -205,9 +206,9 @@
       "label": "jobs",
       "sublabel": "Requested work and user-visible status",
       "tag": "Jobs and outputs",
-      "row": 0,
-      "col": 2,
-      "width": 310,
+      "row": 2,
+      "col": 0,
+      "width": 360,
       "attributes": [
         {
           "name": "id",
@@ -251,9 +252,9 @@
       "label": "job_attempts",
       "sublabel": "UK：job_id + attempt_number；invocation_id",
       "tag": "Submission and execution",
-      "row": 1,
-      "col": 3,
-      "width": 450,
+      "row": 3,
+      "col": 1,
+      "width": 480,
       "attributes": [
         {
           "name": "id",
@@ -358,9 +359,9 @@
       "label": "job_outputs",
       "sublabel": "Composite PK: job_id + stem",
       "tag": "Jobs and outputs",
-      "row": 1,
-      "col": 2,
-      "width": 310,
+      "row": 3,
+      "col": 0,
+      "width": 360,
       "attributes": [
         {
           "name": "job_id",
@@ -395,9 +396,9 @@
       "label": "job_submission_receipts",
       "sublabel": "Composite PK: user_id + key",
       "tag": "Submission and execution",
-      "row": 0,
-      "col": 3,
-      "width": 450,
+      "row": 2,
+      "col": 1,
+      "width": 480,
       "attributes": [
         {
           "name": "user_id",
