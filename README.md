@@ -6,7 +6,8 @@
 or paste a YouTube video link. Separate its instruments with BS-RoFormer, then
 preview or download the tracks in your browser.
 
-IsoJam runs locally with a CPU API, a CPU audio importer and a separate NVIDIA GPU processor. It uses
+IsoJam runs on one Linux host, locally or in a verified private AWS deployment,
+with a CPU API, a CPU audio importer and a separate NVIDIA GPU processor. It uses
 Python, FastAPI, SQLAlchemy, SQLite and Docker Compose. Accounts, recordings and
 results persist across container replacements.
 
@@ -201,10 +202,11 @@ queue recovery, storage and diagnostic commands.
 
 ## How it works
 
-![IsoJam local system architecture](docs/architecture/system-overview.svg)
+![IsoJam private AWS deployment architecture](docs/architecture/system-overview.svg)
 
-See the [architecture diagrams](docs/architecture/README.md) for the job
-execution sequence, complete database ERD and interactive readers.
+See the [architecture diagrams](docs/architecture/README.md) for the verified
+private AWS deployment, runtime components, job execution sequence and complete
+database ERD, with larger-text HTML views for presentation.
 
 The API accepts durable queued jobs without loading the model. The dispatcher
 runs one attempt at a time on this host. Execution permission, heartbeats and

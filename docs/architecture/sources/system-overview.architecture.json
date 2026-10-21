@@ -2,11 +2,11 @@
   "schema_version": 1,
   "diagram_type": "architecture",
   "meta": {
-    "title": "IsoJam | Local System Architecture",
+    "title": "IsoJam | Verified AWS Private Deployment",
     "output": "docs/architecture/system-overview.html",
     "locale": "en",
     "repository": {
-      "revision": "0b202f9bfdd82f0040c4ba1194ca69d9d86cf1c5",
+      "revision": "f2bea0ca7ee2cd13fc3083ee0f3ad08008cc5d97",
       "url": "git@github.com:Ian0520/isojam.git",
       "link_mode": "local-only"
     },
@@ -14,255 +14,182 @@
   },
   "components": [
     {
-      "id": "browser",
+      "id": "owner",
       "type": "frontend",
-      "label": "Browser",
-      "sublabel": "HTML / CSS / JavaScript",
+      "label": "Owner browser",
+      "sublabel": "localhost:8001",
+      "tag": "SSM client + plugin",
       "pos": [
         40,
-        300
+        70
       ],
       "size": [
-        190,
-        76
+        200,
+        96
       ],
       "sources": [
         {
-          "path": "backend/app/static/app.js",
-          "line": 1,
-          "end_line": 80,
-          "label": "Browser entry point and session state"
-        },
-        {
-          "path": "backend/app/routers/web.py",
-          "line": 24,
-          "end_line": 49,
-          "label": "Web page and UI configuration"
+          "path": "docs/aws-test-deployment.md",
+          "line": 80,
+          "end_line": 107,
+          "label": "Private browser connection"
         }
       ]
     },
     {
-      "id": "api",
-      "type": "backend",
-      "label": "API",
-      "sublabel": "FastAPI · CPU",
-      "tag": "api container",
+      "id": "ssm",
+      "type": "cloud",
+      "label": "Session Manager",
+      "sublabel": "Private port-forwarding",
+      "tag": "AWS Systems Manager",
       "pos": [
-        360,
-        300
-      ],
-      "size": [
-        230,
-        76
-      ],
-      "sources": [
-        {
-          "path": "backend/app/routers/jobs.py",
-          "line": 102,
-          "end_line": 221,
-          "label": "Job submission, status and protected downloads"
-        },
-        {
-          "path": "backend/app/routers/uploads.py",
-          "line": 23,
-          "end_line": 108,
-          "label": "Audio validation, files and metadata"
-        },
-        {
-          "path": "backend/app/routers/imports.py",
-          "line": 23,
-          "end_line": 97,
-          "label": "Asynchronous import API"
-        }
-      ]
-    },
-    {
-      "id": "db",
-      "type": "database",
-      "label": "SQLite",
-      "sublabel": "Users / queue / attempts",
-      "pos": [
-        760,
-        60
+        410,
+        70
       ],
       "size": [
         240,
-        76
+        96
       ],
       "sources": [
         {
-          "path": "backend/app/db_models.py",
-          "line": 21,
-          "end_line": 247,
-          "label": "SQLite data models"
-        },
-        {
-          "path": "backend/app/repositories/job_submissions.py",
-          "line": 38,
-          "end_line": 80,
-          "label": "Atomic job and receipt creation"
-        },
-        {
-          "path": "backend/app/repositories/job_reservations.py",
-          "line": 737,
-          "end_line": 868,
-          "label": "Atomic completion publication"
+          "path": "docs/aws-test-deployment.md",
+          "line": 80,
+          "end_line": 107,
+          "label": "SSM tunnel and local port"
         }
       ]
     },
     {
-      "id": "youtube",
-      "type": "external",
-      "label": "YouTube",
-      "sublabel": "Single-video audio source",
-      "pos": [
-        1510,
-        300
-      ],
-      "size": [
-        190,
-        76
-      ],
-      "sources": [
-        {
-          "path": "backend/app/import_worker.py",
-          "line": 109,
-          "end_line": 120,
-          "label": "Download source"
-        }
-      ]
-    },
-    {
-      "id": "importer",
+      "id": "agent",
       "type": "backend",
-      "label": "Importer",
-      "sublabel": "Download -> WAV -> upload",
-      "tag": "importer container / CPU",
+      "label": "SSM Agent",
+      "sublabel": "Outbound control channel",
+      "tag": "Host IAM instance profile",
       "pos": [
-        1140,
+        410,
         300
       ],
       "size": [
-        230,
-        76
+        240,
+        96
       ],
       "sources": [
         {
-          "path": "backend/app/import_worker.py",
-          "line": 91,
-          "end_line": 146,
-          "label": "Short transactions and upload registration"
-        },
-        {
-          "path": "backend/app/repositories/audio_imports.py",
+          "path": "deploy/aws/ec2.yaml",
           "line": 30,
-          "end_line": 89,
-          "label": "Import admission and claiming"
+          "end_line": 74,
+          "label": "SSM role and outbound access"
         },
         {
-          "path": "compose.yaml",
-          "line": 63,
-          "end_line": 85,
-          "label": "Separate CPU importer"
+          "path": "docs/aws-test-deployment.md",
+          "line": 310,
+          "end_line": 329,
+          "label": "Verified host and private access"
         }
       ]
     },
     {
-      "id": "files",
-      "type": "database",
-      "label": "Audio and results",
-      "sublabel": "WAV · stems · manifest",
-      "tag": "data volume",
+      "id": "compose",
+      "type": "backend",
+      "label": "Docker Compose",
+      "sublabel": "API + importer + GPU",
+      "tag": "One active inference",
       "pos": [
-        760,
-        650
+        410,
+        540
       ],
       "size": [
-        240,
-        76
+        260,
+        100
       ],
       "sources": [
-        {
-          "path": "backend/app/storage.py",
-          "line": 17,
-          "end_line": 48,
-          "label": "Source audio storage"
-        },
-        {
-          "path": "backend/app/results.py",
-          "line": 167,
-          "end_line": 461,
-          "label": "Result and manifest storage and verification"
-        },
         {
           "path": "compose.yaml",
           "line": 28,
           "end_line": 134,
-          "label": "Shared data and model volumes"
+          "label": "API, importer and processor services"
+        },
+        {
+          "path": "deploy/aws/compose.aws.yaml",
+          "line": 1,
+          "end_line": 21,
+          "label": "Persistent host bind mounts"
+        },
+        {
+          "path": "docs/aws-test-deployment.md",
+          "line": 340,
+          "end_line": 351,
+          "label": "Real GPU job and verified outputs"
         }
       ]
     },
     {
-      "id": "processor",
+      "id": "systemd",
       "type": "backend",
-      "label": "Processor",
-      "sublabel": "Grant -> exit + verify -> publish",
-      "tag": "CPU Dispatcher ＋ GPU worker",
+      "label": "systemd",
+      "sublabel": "Start / drain / stop",
+      "tag": "120-min boot deadline",
       "pos": [
-        745,
-        300
+        790,
+        540
       ],
       "size": [
-        270,
-        84
+        220,
+        100
       ],
       "sources": [
         {
-          "path": "backend/app/dispatcher.py",
-          "line": 139,
-          "end_line": 225,
-          "label": "Reservation, submission and publication"
+          "path": "deploy/aws/isojam.service",
+          "line": 1,
+          "end_line": 17,
+          "label": "Explicit startup and graceful drain"
         },
         {
-          "path": "backend/app/model_worker.py",
-          "line": 29,
-          "end_line": 108,
-          "label": "Execution grant, heartbeats and model invocation"
+          "path": "deploy/aws/ec2.yaml",
+          "line": 119,
+          "end_line": 145,
+          "label": "Boot timer and EC2 stop action"
         },
         {
-          "path": "backend/app/repositories/job_reservations.py",
-          "line": 737,
-          "end_line": 868,
-          "label": "Confirm exit and verify before completion"
+          "path": "docs/aws-test-deployment.md",
+          "line": 373,
+          "end_line": 391,
+          "label": "Verified restart and orderly shutdown"
         }
       ]
     },
     {
-      "id": "weights",
+      "id": "ebs",
       "type": "database",
-      "label": "Model cache",
-      "sublabel": "Pinned weights / read-only",
-      "tag": "models volume",
+      "label": "Encrypted EBS",
+      "sublabel": "100 GB gp3 | retained",
+      "tag": "SQLite / audio / models",
       "pos": [
-        500,
-        500
+        410,
+        800
       ],
       "size": [
-        240,
-        76
+        260,
+        100
       ],
       "sources": [
         {
-          "path": "compose.yaml",
-          "line": 39,
-          "end_line": 48,
-          "label": "Read-only model mount for the processor"
+          "path": "deploy/aws/ec2.yaml",
+          "line": 106,
+          "end_line": 112,
+          "label": "Encrypted retained root disk"
         },
         {
-          "path": "backend/app/processor.py",
-          "line": 22,
-          "end_line": 82,
-          "label": "Model asset verification and preparation"
+          "path": "deploy/aws/compose.aws.yaml",
+          "line": 1,
+          "end_line": 21,
+          "label": "Data and model host directories"
+        },
+        {
+          "path": "docs/aws-test-deployment.md",
+          "line": 379,
+          "end_line": 389,
+          "label": "Persistence and download hash verification"
         }
       ]
     }
@@ -270,101 +197,88 @@
   "boundaries": [
     {
       "kind": "region",
-      "label": "One Linux / WSL2 host | Docker Compose",
+      "label": "AWS | ap-southeast-2 (Sydney)",
       "wraps": [
-        "api",
-        "db",
-        "importer",
-        "files",
-        "processor",
-        "weights"
+        "ssm",
+        "agent",
+        "compose",
+        "systemd",
+        "ebs"
+      ],
+      "pad": 40
+    },
+    {
+      "kind": "security-group",
+      "label": "EC2 g4dn.xlarge | NVIDIA T4 | no inbound",
+      "wraps": [
+        "agent",
+        "compose",
+        "systemd"
       ],
       "pad": 24
     }
   ],
   "connections": [
     {
-      "id": "http",
-      "to": "api",
-      "label": "HTTP · Bearer",
-      "variant": "emphasis",
-      "from": "browser"
+      "id": "private-session",
+      "from": "owner",
+      "to": "ssm",
+      "label": "SSM tunnel",
+      "variant": "emphasis"
     },
     {
-      "id": "api-sql",
-      "to": "db",
-      "label": "SQL",
-      "from": "api"
+      "id": "outbound-ssm",
+      "from": "agent",
+      "to": "ssm",
+      "label": "TLS 443",
+      "variant": "security"
     },
     {
-      "id": "api-files",
-      "to": "files",
-      "label": "Upload / download",
-      "from": "api"
+      "id": "forward-api",
+      "from": "agent",
+      "to": "compose",
+      "label": "HTTP 8000",
+      "variant": "emphasis"
     },
     {
-      "id": "import-source",
-      "to": "youtube",
-      "label": "HTTPS download",
-      "from": "importer"
+      "id": "service-control",
+      "from": "systemd",
+      "to": "compose",
+      "label": "Start / drain"
     },
     {
-      "id": "import-sql",
-      "to": "db",
-      "label": "Claim / register",
-      "from": "importer"
-    },
-    {
-      "id": "import-files",
-      "to": "files",
-      "label": "Save validated WAV",
-      "from": "importer"
-    },
-    {
-      "id": "process-sql",
-      "to": "db",
-      "label": "Grant / publish",
-      "from": "processor"
-    },
-    {
-      "id": "process-files",
-      "to": "files",
-      "label": "Read / write / verify",
-      "from": "processor"
-    },
-    {
-      "id": "read-weights",
-      "to": "weights",
-      "label": "Read weights",
-      "from": "processor"
+      "id": "persistent-files",
+      "from": "compose",
+      "to": "ebs",
+      "label": "Bind mounts"
     }
   ],
   "cards": [
     {
       "dot": "cyan",
-      "title": "Durable work",
+      "title": "Verified AWS private deployment",
       "items": [
-        "The API commits a job and receipt; the dispatcher discovers queued work in SQLite.",
-        "The API and processor share local SQLite and files; no remote GPU RPC is used.",
-        "One inference runs at a time; other accepted jobs remain queued."
+        "Real T4 inference, idempotent submission and seven output tracks verified on 2026-10-21.",
+        "A stop/start preserved the account, attempt, upload, result hashes, images and model cache.",
+        "Authenticated downloads matched all hashes; requests without credentials returned 401."
       ]
     },
     {
       "dot": "emerald",
-      "title": "Completion requirements",
+      "title": "Storage and lifecycle",
       "items": [
-        "The processor contains a CPU dispatcher and a GPU child process per job.",
-        "Execution needs a grant. Publication requires confirmed exit and all seven valid tracks.",
-        "Saved results can recover from a publication failure without repeating inference."
+        "Data: /srv/isojam/data. Models: /srv/isojam/models, mounted read-only by the processor.",
+        "The boot timer requests graceful drain, then EC2 stop; application startup is explicit.",
+        "The timer action was tested manually; the test did not wait for the full two-hour deadline."
       ]
     },
     {
       "dot": "amber",
-      "title": "Runtime scope",
+      "title": "Access and scope",
       "items": [
-        "Three long-running containers; migrations and model preparation are one-off tasks.",
-        "SQLite and audio use the data volume; model assets use a separate models volume.",
-        "This diagram shows the implemented local queued mode, without a public deployment."
+        "Private SSM access; the security group has no inbound rules. Public HTTPS is a later stage.",
+        "The most recent inspection found the instance stopped. This diagram describes the deployed topology.",
+        "The synthetic-audio smoke is not a music-quality or multi-user load benchmark."
       ]
     }
   ]

@@ -6,7 +6,7 @@
     "output": "docs/architecture/job-execution.html",
     "locale": "en",
     "repository": {
-      "revision": "0b202f9bfdd82f0040c4ba1194ca69d9d86cf1c5",
+      "revision": "f2bea0ca7ee2cd13fc3083ee0f3ad08008cc5d97",
       "url": "git@github.com:Ian0520/isojam.git",
       "link_mode": "local-only"
     },
@@ -134,7 +134,7 @@
     {
       "id": "files",
       "type": "database",
-      "label": "File storage",
+      "label": "Storage",
       "sublabel": "Audio and results",
       "sources": [
         {
@@ -331,7 +331,8 @@
       "items": [
         "The starting upload_id is already validated and belongs to the user.",
         "This is the successful path. Vertical position means order, not measured duration.",
-        "Authorization, heartbeats, exit confirmation and publication are separate operations."
+        "Authorization, heartbeats, exit confirmation and publication are separate operations.",
+        "The API and processor run on the same EC2 host in the verified AWS private deployment."
       ]
     },
     {

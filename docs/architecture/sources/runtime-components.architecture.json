@@ -1,0 +1,371 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "IsoJam | Runtime Components",
+    "output": "docs/architecture/runtime-components.html",
+    "locale": "en",
+    "repository": {
+      "revision": "f2bea0ca7ee2cd13fc3083ee0f3ad08008cc5d97",
+      "url": "git@github.com:Ian0520/isojam.git",
+      "link_mode": "local-only"
+    },
+    "quality_profile": "showcase"
+  },
+  "components": [
+    {
+      "id": "browser",
+      "type": "frontend",
+      "label": "Browser",
+      "sublabel": "HTML / CSS / JavaScript",
+      "pos": [
+        40,
+        40
+      ],
+      "size": [
+        220,
+        90
+      ],
+      "sources": [
+        {
+          "path": "backend/app/static/app.js",
+          "line": 1,
+          "end_line": 80,
+          "label": "Browser entry point and session state"
+        },
+        {
+          "path": "backend/app/routers/web.py",
+          "line": 24,
+          "end_line": 49,
+          "label": "Web page and UI configuration"
+        }
+      ]
+    },
+    {
+      "id": "api",
+      "type": "backend",
+      "label": "API",
+      "sublabel": "FastAPI · CPU",
+      "tag": "api container",
+      "pos": [
+        40,
+        240
+      ],
+      "size": [
+        220,
+        96
+      ],
+      "sources": [
+        {
+          "path": "backend/app/routers/jobs.py",
+          "line": 102,
+          "end_line": 221,
+          "label": "Job submission, status and protected downloads"
+        },
+        {
+          "path": "backend/app/routers/uploads.py",
+          "line": 23,
+          "end_line": 108,
+          "label": "Audio validation, files and metadata"
+        },
+        {
+          "path": "backend/app/routers/imports.py",
+          "line": 23,
+          "end_line": 97,
+          "label": "Asynchronous import API"
+        }
+      ]
+    },
+    {
+      "id": "db",
+      "type": "database",
+      "label": "SQLite",
+      "sublabel": "Users / queue / attempts",
+      "pos": [
+        40,
+        480
+      ],
+      "size": [
+        220,
+        96
+      ],
+      "sources": [
+        {
+          "path": "backend/app/db_models.py",
+          "line": 21,
+          "end_line": 247,
+          "label": "SQLite data models"
+        },
+        {
+          "path": "backend/app/repositories/job_submissions.py",
+          "line": 38,
+          "end_line": 80,
+          "label": "Atomic job and receipt creation"
+        },
+        {
+          "path": "backend/app/repositories/job_reservations.py",
+          "line": 737,
+          "end_line": 868,
+          "label": "Atomic completion publication"
+        }
+      ]
+    },
+    {
+      "id": "youtube",
+      "type": "external",
+      "label": "YouTube",
+      "sublabel": "Single-video audio source",
+      "pos": [
+        420,
+        40
+      ],
+      "size": [
+        220,
+        90
+      ],
+      "sources": [
+        {
+          "path": "backend/app/import_worker.py",
+          "line": 109,
+          "end_line": 120,
+          "label": "Download source"
+        }
+      ]
+    },
+    {
+      "id": "importer",
+      "type": "backend",
+      "label": "Importer",
+      "sublabel": "Download -> WAV -> upload",
+      "tag": "importer container / CPU",
+      "pos": [
+        420,
+        240
+      ],
+      "size": [
+        220,
+        96
+      ],
+      "sources": [
+        {
+          "path": "backend/app/import_worker.py",
+          "line": 91,
+          "end_line": 146,
+          "label": "Short transactions and upload registration"
+        },
+        {
+          "path": "backend/app/repositories/audio_imports.py",
+          "line": 30,
+          "end_line": 89,
+          "label": "Import admission and claiming"
+        },
+        {
+          "path": "compose.yaml",
+          "line": 63,
+          "end_line": 85,
+          "label": "Separate CPU importer"
+        }
+      ]
+    },
+    {
+      "id": "files",
+      "type": "database",
+      "label": "Audio and results",
+      "sublabel": "WAV · stems · manifest",
+      "tag": "/srv/isojam/data",
+      "pos": [
+        420,
+        480
+      ],
+      "size": [
+        220,
+        96
+      ],
+      "sources": [
+        {
+          "path": "backend/app/storage.py",
+          "line": 17,
+          "end_line": 48,
+          "label": "Source audio storage"
+        },
+        {
+          "path": "backend/app/results.py",
+          "line": 167,
+          "end_line": 461,
+          "label": "Result and manifest storage and verification"
+        },
+        {
+          "path": "compose.yaml",
+          "line": 28,
+          "end_line": 134,
+          "label": "Shared data and model volumes"
+        }
+      ]
+    },
+    {
+      "id": "processor",
+      "type": "backend",
+      "label": "Processor",
+      "sublabel": "Grant -> verify -> publish",
+      "tag": "CPU dispatcher + GPU child",
+      "pos": [
+        40,
+        720
+      ],
+      "size": [
+        260,
+        100
+      ],
+      "sources": [
+        {
+          "path": "backend/app/dispatcher.py",
+          "line": 139,
+          "end_line": 225,
+          "label": "Reservation, submission and publication"
+        },
+        {
+          "path": "backend/app/model_worker.py",
+          "line": 29,
+          "end_line": 108,
+          "label": "Execution grant, heartbeats and model invocation"
+        },
+        {
+          "path": "backend/app/repositories/job_reservations.py",
+          "line": 737,
+          "end_line": 868,
+          "label": "Confirm exit and verify before completion"
+        }
+      ]
+    },
+    {
+      "id": "weights",
+      "type": "database",
+      "label": "Model cache",
+      "sublabel": "Pinned weights / read-only",
+      "tag": "/srv/isojam/models",
+      "pos": [
+        420,
+        720
+      ],
+      "size": [
+        220,
+        100
+      ],
+      "sources": [
+        {
+          "path": "compose.yaml",
+          "line": 39,
+          "end_line": 48,
+          "label": "Read-only model mount for the processor"
+        },
+        {
+          "path": "backend/app/processor.py",
+          "line": 22,
+          "end_line": 82,
+          "label": "Model asset verification and preparation"
+        }
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "One EC2 host | Docker Compose",
+      "wraps": [
+        "api",
+        "db",
+        "importer",
+        "files",
+        "processor",
+        "weights"
+      ],
+      "pad": 24
+    }
+  ],
+  "connections": [
+    {
+      "id": "http",
+      "to": "api",
+      "label": "HTTP · Bearer",
+      "variant": "emphasis",
+      "from": "browser"
+    },
+    {
+      "id": "api-sql",
+      "to": "db",
+      "label": "SQL",
+      "from": "api"
+    },
+    {
+      "id": "api-files",
+      "to": "files",
+      "label": "Upload / download",
+      "from": "api"
+    },
+    {
+      "id": "import-source",
+      "to": "youtube",
+      "label": "HTTPS download",
+      "from": "importer"
+    },
+    {
+      "id": "import-sql",
+      "to": "db",
+      "label": "Claim / register",
+      "from": "importer"
+    },
+    {
+      "id": "import-files",
+      "to": "files",
+      "label": "Save validated WAV",
+      "from": "importer"
+    },
+    {
+      "id": "process-sql",
+      "to": "db",
+      "label": "Grant / publish",
+      "from": "processor"
+    },
+    {
+      "id": "process-files",
+      "to": "files",
+      "label": "Read / write / verify",
+      "from": "processor"
+    },
+    {
+      "id": "read-weights",
+      "to": "weights",
+      "label": "Read weights",
+      "from": "processor"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Durable work",
+      "items": [
+        "The API commits a job and receipt; the dispatcher discovers queued work in SQLite.",
+        "The API and processor share local SQLite and files; no remote GPU RPC is used.",
+        "One inference runs at a time; other accepted jobs remain queued."
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Completion requirements",
+      "items": [
+        "The processor contains a CPU dispatcher and a GPU child process per job.",
+        "Execution needs a grant. Publication requires confirmed exit and all seven valid tracks.",
+        "Saved results can recover from a publication failure without repeating inference."
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Runtime scope",
+      "items": [
+        "AWS private test verified on 2026-10-21; the same runtime also runs locally.",
+        "On AWS, data and models are bind-mounted from the retained EBS root disk.",
+        "Three long-running containers; migrations and model preparation are one-off tasks."
+      ]
+    }
+  ]
+}
