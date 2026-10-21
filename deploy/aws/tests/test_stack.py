@@ -24,6 +24,8 @@ class StackTests(unittest.TestCase):
             "#!/usr/bin/env python3\n"
             "import json, os, sys\n"
             "from pathlib import Path\n"
+            "if 'run' in sys.argv and '--interactive=false' not in sys.argv:\n"
+            " sys.stdin.read()\n"
             "Path(os.environ['DOCKER_CALL_LOG']).write_text(json.dumps({\n"
             " 'args': sys.argv[1:], 'cwd': os.getcwd(),\n"
             " 'jwt': os.environ.get('ISOJAM_JWT_SECRET_KEY')}))\n"
@@ -94,6 +96,25 @@ class StackTests(unittest.TestCase):
         self.assertEqual(response.returncode, 2)
         self.assertIn("Usage:", response.stderr)
         self.assertFalse(self.log.exists())
+
+    def test_model_setup_leaves_parent_script_input_unread(self):
+        response = subprocess.run(
+            [
+                "bash",
+                "-c",
+                'bash "$1" models; IFS= read -r pending; printf "%s" "$pending"',
+                "parent",
+                str(WRAPPER),
+            ],
+            cwd=self.directory,
+            env=self.env,
+            input="next-parent-command\n",
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(response.returncode, 0, response.stderr)
+        self.assertEqual(response.stdout, "next-parent-command")
 
 
 if __name__ == "__main__":
