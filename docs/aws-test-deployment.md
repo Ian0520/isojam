@@ -350,7 +350,7 @@ These checks use synthetic tones, not a music-quality benchmark. They do not
 establish performance for ten-minute recordings, five simultaneous users or
 YouTube downloads from AWS addresses.
 
-### Spend-limit interruption and remaining verification
+### Spend-limit interruption and recovery
 
 After the application drained, a normal EC2 stop completed and the same instance
 started again. SSM returned online, but the application-level persistence check
@@ -370,16 +370,31 @@ amount and resulting cost exposure before changing it; do not remove managed
 policies or create replacement resources to bypass the control. See
 [AWS spend-limit documentation](https://docs.aws.amazon.com/accounts/latest/reference/create-spend-limit.html).
 
-This run has **not** completed deployment verification. Once the project permits
-starting the existing host, finish these checks:
+After the owner removed the spend limit, the same instance successfully started
+at 14:40 UTC. The application was not enabled for automatic startup, and the
+boot timer was active with its next action at 16:40:43 UTC. The root filesystem
+check reported success and SQLite's read-only `PRAGMA integrity_check` returned
+`ok`.
 
-- Verify the database integrity, saved account, job and attempt, upload hash,
-  all seven result hashes, model cache and image IDs after stop/start.
-- Download all seven results with authentication and verify unauthenticated
-  requests are rejected.
-- Recheck the boot timer, exercise its orderly shutdown action and confirm
-  EC2 reaches `stopped`. An active timer alone does not prove its action works.
-- Check actual charges and credit application in AWS Settings > Billing.
+Model preparation verified the existing cache without downloading again. The
+application started from the three existing images without rebuilding; the API,
+importer and processor were healthy. Logging into the saved test account worked,
+and the completed job still had the same single attempt, exit proof, upload hash
+and seven result hashes. All seven authenticated downloads matched those hashes;
+all seven requests without credentials returned `401`.
+
+At 14:43:45 UTC, the test manually started `isojam-session-end.service`, the same
+action used by the boot timer. The Linux console recorded orderly service
+shutdown, filesystem unmounting and `reboot: Power down`. EC2 was confirmed
+`stopped` at 14:50 UTC, with the root disk retained; no force stop was used.
+This tests the timer's shutdown action and the installed two-hour deadline
+separately; the test did not wait two hours for an actual timer expiration.
+
+Cost Explorer returned no usage entries yet for this project's October-to-date
+query, and marked the result estimated. The Paid plan was active and the credit
+balance still reported $200. Empty billing results are not proof of zero cost;
+checking posted charges and credit application in AWS Settings > Billing remains
+pending.
 
 The private tunnel is closed while the host is stopped, so `localhost:8001`
 does not currently serve the AWS application. Stopped compute has no instance
