@@ -1,0 +1,356 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "IsoJam | Job Execution Sequence",
+    "output": "docs/architecture/job-execution.html",
+    "locale": "en",
+    "repository": {
+      "revision": "0b202f9bfdd82f0040c4ba1194ca69d9d86cf1c5",
+      "url": "git@github.com:Ian0520/isojam.git",
+      "link_mode": "local-only"
+    },
+    "quality_profile": "showcase"
+  },
+  "participants": [
+    {
+      "id": "browser",
+      "type": "frontend",
+      "label": "Browser",
+      "sublabel": "Reuse submission key",
+      "sources": [
+        {
+          "path": "backend/app/static/app.js",
+          "line": 1,
+          "end_line": 80,
+          "label": "Browser entry point and session state"
+        },
+        {
+          "path": "backend/app/routers/web.py",
+          "line": 24,
+          "end_line": 49,
+          "label": "Web page and UI configuration"
+        }
+      ]
+    },
+    {
+      "id": "api",
+      "type": "backend",
+      "label": "API",
+      "sublabel": "Identity and ownership",
+      "sources": [
+        {
+          "path": "backend/app/routers/jobs.py",
+          "line": 102,
+          "end_line": 221,
+          "label": "Job submission, status and protected downloads"
+        },
+        {
+          "path": "backend/app/routers/uploads.py",
+          "line": 23,
+          "end_line": 108,
+          "label": "Audio validation, files and metadata"
+        },
+        {
+          "path": "backend/app/routers/imports.py",
+          "line": 23,
+          "end_line": 97,
+          "label": "Asynchronous import API"
+        }
+      ]
+    },
+    {
+      "id": "db",
+      "type": "database",
+      "label": "SQLite",
+      "sublabel": "Durable state",
+      "sources": [
+        {
+          "path": "backend/app/db_models.py",
+          "line": 21,
+          "end_line": 247,
+          "label": "SQLite data models"
+        },
+        {
+          "path": "backend/app/repositories/job_submissions.py",
+          "line": 38,
+          "end_line": 80,
+          "label": "Atomic job and receipt creation"
+        },
+        {
+          "path": "backend/app/repositories/job_reservations.py",
+          "line": 737,
+          "end_line": 868,
+          "label": "Atomic completion publication"
+        }
+      ]
+    },
+    {
+      "id": "dispatcher",
+      "type": "backend",
+      "label": "Dispatcher",
+      "sublabel": "Processor parent",
+      "sources": [
+        {
+          "path": "backend/app/dispatcher.py",
+          "line": 139,
+          "end_line": 225,
+          "label": "Execution and publication coordination"
+        },
+        {
+          "path": "backend/app/model_execution.py",
+          "line": 90,
+          "end_line": 176,
+          "label": "Start execution and confirm exit"
+        },
+        {
+          "path": "backend/app/publication.py",
+          "line": 16,
+          "end_line": 43,
+          "label": "Verify before publication"
+        }
+      ]
+    },
+    {
+      "id": "worker",
+      "type": "backend",
+      "label": "GPU worker",
+      "sublabel": "Authorized child",
+      "sources": [
+        {
+          "path": "backend/app/model_worker.py",
+          "line": 29,
+          "end_line": 108,
+          "label": "Grant, heartbeats and results"
+        },
+        {
+          "path": "backend/app/model_processing.py",
+          "line": 119,
+          "end_line": 147,
+          "label": "Inference outside database sessions"
+        }
+      ]
+    },
+    {
+      "id": "files",
+      "type": "database",
+      "label": "File storage",
+      "sublabel": "Audio and results",
+      "sources": [
+        {
+          "path": "backend/app/storage.py",
+          "line": 17,
+          "end_line": 48,
+          "label": "Source audio storage"
+        },
+        {
+          "path": "backend/app/results.py",
+          "line": 167,
+          "end_line": 461,
+          "label": "Result and manifest storage and verification"
+        },
+        {
+          "path": "compose.yaml",
+          "line": 28,
+          "end_line": 134,
+          "label": "Shared data and model volumes"
+        }
+      ]
+    }
+  ],
+  "messages": [
+    {
+      "id": "step-1",
+      "from": "browser",
+      "to": "api",
+      "y": 180,
+      "label": "POST /jobs + key",
+      "variant": "emphasis"
+    },
+    {
+      "id": "step-2",
+      "from": "api",
+      "to": "db",
+      "y": 224,
+      "label": "Commit job + receipt",
+      "variant": "default"
+    },
+    {
+      "id": "step-3",
+      "from": "api",
+      "to": "browser",
+      "y": 268,
+      "label": "200 pending",
+      "variant": "return"
+    },
+    {
+      "id": "step-4",
+      "from": "dispatcher",
+      "to": "db",
+      "y": 312,
+      "label": "Reserve; mark submitting",
+      "variant": "default",
+      "note": "Reserve the attempt and mark submitting in separate short transactions, before starting the worker."
+    },
+    {
+      "id": "step-5",
+      "from": "dispatcher",
+      "to": "worker",
+      "y": 404,
+      "label": "Start model child",
+      "variant": "emphasis"
+    },
+    {
+      "id": "step-6",
+      "from": "worker",
+      "to": "db",
+      "y": 448,
+      "label": "Acquire execution grant",
+      "variant": "security",
+      "note": "No grant means no execution. Load the model only after authorization."
+    },
+    {
+      "id": "step-7",
+      "from": "worker",
+      "to": "files",
+      "y": 540,
+      "label": "Read validated WAV",
+      "variant": "default"
+    },
+    {
+      "id": "step-8",
+      "from": "worker",
+      "to": "db",
+      "y": 584,
+      "label": "Periodic heartbeat",
+      "variant": "dashed",
+      "note": "Heartbeats run alongside inference; they do not prove completion."
+    },
+    {
+      "id": "step-9",
+      "from": "worker",
+      "to": "files",
+      "y": 676,
+      "label": "Save 7 WAVs; manifest last",
+      "variant": "emphasis"
+    },
+    {
+      "id": "step-10",
+      "from": "worker",
+      "to": "dispatcher",
+      "y": 720,
+      "label": "Report result; child exits",
+      "variant": "return",
+      "note": "The parent separately confirms that the authorized child and execution group have exited."
+    },
+    {
+      "id": "step-11",
+      "from": "dispatcher",
+      "to": "db",
+      "y": 812,
+      "label": "Persist stop proof",
+      "variant": "default"
+    },
+    {
+      "id": "step-12",
+      "from": "dispatcher",
+      "to": "files",
+      "y": 856,
+      "label": "Verify WAVs, identity, SHA-256",
+      "variant": "default"
+    },
+    {
+      "id": "step-13",
+      "from": "dispatcher",
+      "to": "db",
+      "y": 900,
+      "label": "Commit outputs + success",
+      "variant": "emphasis"
+    },
+    {
+      "id": "step-14",
+      "from": "browser",
+      "to": "api",
+      "y": 944,
+      "label": "GET /jobs/{id}",
+      "variant": "default"
+    },
+    {
+      "id": "step-15",
+      "from": "api",
+      "to": "db",
+      "y": 988,
+      "label": "Check owner; read status",
+      "variant": "security"
+    },
+    {
+      "id": "step-16",
+      "from": "api",
+      "to": "browser",
+      "y": 1032,
+      "label": "completed + outputs",
+      "variant": "return"
+    },
+    {
+      "id": "step-17",
+      "from": "browser",
+      "to": "api",
+      "y": 1076,
+      "label": "Request track + Bearer",
+      "variant": "default"
+    },
+    {
+      "id": "step-18",
+      "from": "api",
+      "to": "db",
+      "y": 1120,
+      "label": "Recheck ownership",
+      "variant": "security"
+    },
+    {
+      "id": "step-19",
+      "from": "api",
+      "to": "files",
+      "y": 1164,
+      "label": "Read track file",
+      "variant": "default"
+    },
+    {
+      "id": "step-20",
+      "from": "api",
+      "to": "browser",
+      "y": 1208,
+      "label": "Return WAV",
+      "variant": "return"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Scope of this sequence",
+      "items": [
+        "The starting upload_id is already validated and belongs to the user.",
+        "This is the successful path. Vertical position means order, not measured duration.",
+        "Authorization, heartbeats, exit confirmation and publication are separate operations."
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Retries and transactions",
+      "items": [
+        "After a lost response, the same user, key and request return the original job.",
+        "Job + receipt creation and outputs + attempt/job success each commit atomically.",
+        "Inference, file reads and verification do not hold database write transactions."
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Recovery boundaries",
+      "items": [
+        "A valid bundle and confirmed exit allow publication recovery without inference.",
+        "Missing exit proof or damaged results require inspection, not automatic re-execution.",
+        "Every status request and download rechecks identity and ownership."
+      ]
+    }
+  ]
+}
