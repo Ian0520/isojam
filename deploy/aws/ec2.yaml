@@ -1,0 +1,153 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  IsoJam private GPU test host in ap-southeast-2. Access through Systems Manager,
+  stop after each test, and retain the encrypted disk for the next session.
+Metadata:
+  AWSToolsMetrics:
+    AWSAgentToolkit: aws-cloudformation@3
+  com.aws.cloudformation.Context:
+    ref: docs/aws-test-deployment.md
+
+Parameters:
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: Existing VPC in ap-southeast-2 with DNS resolution enabled.
+  SubnetId:
+    Type: AWS::EC2::Subnet::Id
+    Description: Public subnet in that VPC with a route to an internet gateway.
+  ImageId:
+    Type: AWS::EC2::Image::Id
+    Default: ami-06567ae981b6477cd
+    Description: AWS Deep Learning Base OSS NVIDIA Driver Ubuntu 24.04, 20261016, Sydney.
+  SessionMinutes:
+    Type: Number
+    Default: 120
+    MinValue: 30
+    MaxValue: 240
+    Description: Minutes from each boot until application drain and host shutdown begin.
+
+Resources:
+  HostRole:
+    Type: AWS::IAM::Role
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: SSM manages the host without SSH keys or inbound ports.
+        must: Application containers need no AWS API permissions.
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Tags:
+        - Key: Project
+          Value: IsoJam
+
+  HostProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles: [!Ref HostRole]
+
+  HostSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: A private browser tunnel avoids exposing the API during the first test.
+        must: Keep ingress empty. Package downloads and SSM require outbound web access.
+    Properties:
+      GroupDescription: IsoJam private test; no inbound connections
+      VpcId: !Ref VpcId
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+          Description: SSM, container dependencies and model downloads over HTTPS
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+          Description: Ubuntu and Debian package mirrors
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-private
+
+  Host:
+    Type: AWS::EC2::Instance
+    # Delete the compute resource on stack deletion, but retain its EBS disk.
+    # Retaining a running instance here would leave a billable GPU behind.
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: One host keeps SQLite, filesystem coordination and one GPU worker together.
+        must: >-
+          Sydney only. Preserve the EBS root disk; never use instance-store NVMe
+          for recordings, models or Docker state. Back up before replacing this host.
+    Properties:
+      ImageId: !Ref ImageId
+      InstanceType: g4dn.xlarge
+      IamInstanceProfile: !Ref HostProfile
+      InstanceInitiatedShutdownBehavior: stop
+      MetadataOptions:
+        HttpEndpoint: enabled
+        HttpTokens: required
+        # Only the host SSM agent needs credentials; bridged containers do not.
+        HttpPutResponseHopLimit: 1
+      NetworkInterfaces:
+        - DeviceIndex: '0'
+          AssociatePublicIpAddress: true
+          SubnetId: !Ref SubnetId
+          GroupSet: [!Ref HostSecurityGroup]
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs:
+            VolumeSize: 100
+            VolumeType: gp3
+            Encrypted: true
+            DeleteOnTermination: false
+      PropagateTagsToVolumeOnCreation: true
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-gpu
+        - Key: Project
+          Value: IsoJam
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          set -euo pipefail
+          # Install the cost safeguard before any manual application setup.
+          cat > /etc/systemd/system/isojam-session-end.service <<'UNIT'
+          [Unit]
+          Description=Drain IsoJam, then stop this EC2 test session
+          [Service]
+          Type=oneshot
+          # Missing/failed application setup must not prevent host shutdown.
+          ExecStart=-/usr/bin/systemctl stop isojam.service
+          ExecStart=/usr/bin/systemctl --no-block poweroff
+          TimeoutStartSec=42min
+          UNIT
+          cat > /etc/systemd/system/isojam-session-end.timer <<'UNIT'
+          [Unit]
+          Description=Limit each IsoJam EC2 test session
+          [Timer]
+          OnBootSec=${SessionMinutes}min
+          AccuracySec=1s
+          Unit=isojam-session-end.service
+          [Install]
+          WantedBy=timers.target
+          UNIT
+          systemctl daemon-reload
+          systemctl enable --now isojam-session-end.timer
+
+Outputs:
+  InstanceId:
+    Description: Connect using SSM in ap-southeast-2; no SSH access is configured.
+    Value: !Ref Host
+  SessionMinutes:
+    Description: Boot-to-drain timer; add time for graceful shutdown of active work.
+    Value: !Ref SessionMinutes

@@ -1,0 +1,21 @@
+name: isojam-aws
+
+# Bind durable state to the EBS root filesystem, independent of Docker's data root.
+# These targets replace the named-volume mounts in compose.yaml when files merge.
+services:
+  migrate:
+    volumes:
+      - /srv/isojam/data:/var/lib/isojam
+  processor:
+    volumes:
+      - /srv/isojam/data:/var/lib/isojam
+      - /srv/isojam/models:/var/cache/isojam/models:ro
+  importer:
+    volumes:
+      - /srv/isojam/data:/var/lib/isojam
+  api:
+    volumes:
+      - /srv/isojam/data:/var/lib/isojam
+  models:
+    volumes:
+      - /srv/isojam/models:/var/cache/isojam/models

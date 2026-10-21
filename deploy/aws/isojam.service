@@ -1,0 +1,18 @@
+[Unit]
+Description=IsoJam private test stack
+Requires=docker.service
+Wants=network-online.target
+After=docker.service network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/opt/isojam
+ExecStart=/opt/isojam/deploy/aws/stack.sh start
+# Runs on ordinary stop AND after a partially failed start. Ordering keeps Docker
+# alive until the application has drained its containers.
+ExecStopPost=/opt/isojam/deploy/aws/stack.sh stop
+TimeoutStartSec=5min
+TimeoutStopSec=40min
+
+# Deliberately no Install section: start the app explicitly for each test session.
